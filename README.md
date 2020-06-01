@@ -2,7 +2,7 @@
 
 Demonstrates seven different techniques for order-independent transparency (OIT) in Vulkan.
 
-![Shows a thousand semitransparent spheres on a gray background with a user interface in the top-left corner.](doc\vk_order_independent_transparency.png)
+![Shows a thousand semitransparent spheres on a gray background with a user interface in the top-left corner.](doc/vk_order_independent_transparency.png)
 
 ## About
 
