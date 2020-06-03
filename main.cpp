@@ -1213,6 +1213,9 @@ int main(int argc, const char** argv)
   deviceInfo.addInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME, false);
 #ifdef _WIN32
   deviceInfo.addInstanceExtension(VK_KHR_WIN32_SURFACE_EXTENSION_NAME, false);
+#else
+  deviceInfo.addInstanceExtension(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
+  deviceInfo.addInstanceExtension(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #endif
   deviceInfo.addDeviceExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
   deviceInfo.addDeviceExtension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, false);
