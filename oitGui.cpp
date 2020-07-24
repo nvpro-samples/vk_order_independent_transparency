@@ -65,11 +65,15 @@ void Sample::DoObjectSizeText(ImageAndView iv, const char* name)
   }
 }
 
-// Displays the Dear ImGui interface.
-// This interface includes tooltips for each of the elements, and also shows
-// or hides fields based on the current OIT algorithm.
-void Sample::DoGUI()
+void Sample::DoGUI(int width, int height, double time)
 {
+  ImGui::GetIO().DeltaTime = static_cast<float>(time - m_uiTime);
+  ImGui::GetIO().DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
+
+  m_uiTime = time;
+
+  ImGui::NewFrame();
+
   ImGui::SetNextWindowPos(ImVec2(5, 5), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(350, 0), ImGuiCond_FirstUseEver);
 

@@ -32,9 +32,6 @@
 
 void Sample::render(VkCommandBuffer& cmdBuffer)
 {
-  // If elements of m_state change, this reinitializes parts of the renderer.
-  updateRendererFromState(cmdBuffer, false);
-
   // Clear auxiliary buffers before we even start a render pass - this
   // reduces the number of render passes we need to use by 1.
   switch(m_state.algorithm)
@@ -80,9 +77,8 @@ void Sample::render(VkCommandBuffer& cmdBuffer)
 
     // Transition the color image to work as a color attachment, in case it
     // was set to VK_IMAGE_LAYOUT_GENERAL.
-    m_colorImage.transitionTo(cmdBuffer,                                      // Command buffer
-                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,       // New layout
-                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,  // Stages to block
+    m_colorImage.transitionTo(cmdBuffer,                                 // Command buffer
+                              VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,  // New layout
                               VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 
     // Set up the render pass
@@ -368,7 +364,7 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmdBuffer, int numObjects)
   vkCmdEndRenderPass(cmdBuffer);
 
   // Transition the color image to work as an attachment
-  m_colorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+  m_colorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                             VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 
   VkRenderPassBeginInfo renderPassInfo    = nvvk::make<VkRenderPassBeginInfo>();

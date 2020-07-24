@@ -34,13 +34,13 @@
 #include <imgui/imgui_helper.h>
 
 #include <nvh/cameracontrol.hpp>
-#include <nvh/timesampler.hpp>
+#include <nvh/fileoperations.hpp>
+#include <nvh/geometry.hpp>
 #include <nvmath/nvmath.h>
 #include <nvmath/nvmath_glsltypes.h>
-#include <nvpwindow.hpp>
+#include <nvvk/appwindowprofiler_vk.hpp>
 #include <nvvk/commands_vk.hpp>
 #include <nvvk/descriptorsets_vk.hpp>
-#include <nvvk/profiler_vk.hpp>
 #include <nvvk/shadermodulemanager_vk.hpp>
 #include <nvvk/shaders_vk.hpp>
 #include <nvvk/swapchain_vk.hpp>
@@ -124,31 +124,25 @@ struct State
   }
 };
 
-class Sample : public NVPWindow
+class Sample : public nvvk::AppWindowProfilerVK
 {
 public:
   // Renderer state
-  nvvk::Context               m_context;
   nvvk::BatchSubmission       m_submission;
   nvvk::RingFences            m_ringFences;
   nvvk::RingCommandPool       m_ringCmdPool;
   nvvk::DeviceMemoryAllocator m_deviceMemoryAllocator;
   nvvk::AllocatorDma          m_allocatorDma;
   nvvk::DebugUtil             m_debug = nvvk::DebugUtil();
-  nvvk::ProfilerVK            m_profilerVK;
-  double                      m_lastProfilerPrintTime        = 0;
-  int                         m_framesSinceLastProfilerPrint = 0;
-  TimeSampler                 m_timeCounter;
-  // Swapchain and state
-  nvvk::SwapChain m_swapChain;
-  VkSurfaceKHR    m_surface = nullptr;
-  bool            m_vsync   = false;
+  bool                        m_submissionWaitForRead;
   // Per-frame objects
-  std::vector<VkFramebuffer>   m_guiSwapChainFramebuffers;  // Swap chain color FBOs for m_renderPassGUI.
   std::vector<nvvk::BufferDma> m_uniformBuffers;
   // We only need one of each of these resources, since only one draw operation will run at once.
-  VkFramebuffer m_mainColorDepthFramebuffer = nullptr;  // Offscreen color + depth FBO for m_renderPassColorDepthClear2General
-  VkFramebuffer m_weightedFramebuffer       = nullptr;  // Slightly complicated FBO for m_renderPassWeighted
+  VkViewport    m_viewportGUI               = {};
+  VkRect2D      m_scissorGUI                = {};
+  VkFramebuffer m_mainColorDepthFramebuffer = nullptr;
+  VkFramebuffer m_weightedFramebuffer       = nullptr;
+  VkFramebuffer m_guiFramebuffer            = nullptr;
   ImageAndView  m_depthImage;
   ImageAndView  m_colorImage;
   BufferAndView m_oitABuffer;
@@ -158,8 +152,9 @@ public:
   ImageAndView  m_oitCounterImage;
   ImageAndView  m_oitWeightedColorImage;
   ImageAndView  m_oitWeightedRevealImage;
-  ImageAndView m_downsampleTargetImage;  // Used as an intermediate texture for MSAA and SSAA before copying to the backbuffer.
-  VkSampler       m_pointSampler = nullptr;
+  ImageAndView m_downsampleImage;  // A 1spp image with the same format as m_colorImage used for resolving m_colorImage.
+  ImageAndView m_guiCompositeImage;  // A 1spp image with the same format as the swapchain.
+  VkSampler    m_pointSampler = nullptr;
   nvvk::BufferDma m_vertexBuffer;
   nvvk::BufferDma m_indexBuffer;
   // Shaders
@@ -187,9 +182,9 @@ public:
   // pool for a number of VkDescriptorSets created using the same layout.
   nvvk::DescriptorSetContainer m_descriptorInfo;
   // Render passes
-  VkRenderPass m_renderPassColorDepthClear = nullptr;  // A render pass with color + depth attachments that clears them.
-  VkRenderPass m_renderPassWeighted = nullptr;  // Render pass for Weighted, Blended OIT - 2 cleared color attachments.
-  VkRenderPass m_renderPassGUI = nullptr;  // Has color + depth attachments, transitioning them from general to present.
+  VkRenderPass m_renderPassColorDepthClear = nullptr;
+  VkRenderPass m_renderPassWeighted        = nullptr;
+  VkRenderPass m_renderPassGUI             = nullptr;
   // Graphics pipelines (organized by the algorithms that use them)
   VkPipeline m_pipelineOpaque              = nullptr;
   VkPipeline m_pipelineSimpleColor         = nullptr;
@@ -210,22 +205,14 @@ public:
 
   // GUI-specific variables
   ImGuiH::Registry m_imGuiRegistry;  // Helper class that tracks IDs for dear imgui
-  // Stores controller states when not captured by Dear ImGui
-  struct
-  {
-    int           mouseButtonFlags = 0;
-    nvmath::vec2f mouseCurrent;
-    int           mouseWheel = 0;
-  } m_controllerState;
+  double           m_uiTime = 0;
 
   // Application state
-  State              m_state;                        // This frame's state
-  State              m_lastState;                    // Last frame's state
-  uint32_t           m_lastSwapChainWidth  = 0;      // Last frame's swapchain width
-  uint32_t           m_lastSwapChainHeight = 0;      // Last frame's swapchain height
-  bool               m_lastVsync           = false;  // Last frame's vsync state
-  nvh::CameraControl m_cameraControl;                // A controllable camera.
-  SceneData          m_sceneUbo;                     // Uniform Buffer Object for the scene, depends on m_cameraControl.
+  State              m_state;          // This frame's state
+  State              m_lastState;      // Last frame's state
+  bool               m_lastVsync = false;      // Last frame's vsync state
+  nvh::CameraControl m_cameraControl;  // A controllable camera
+  SceneData          m_sceneUbo;       // Uniform Buffer Object for the scene, depends on m_cameraControl.
   uint32_t           m_objectTriangleIndices = 0;  // The number of indices used in each sphere. (All objects have the same number of indices.)
   uint32_t           m_sceneTriangleIndices = 0;  // The total number of indices in the scene.
 
@@ -234,41 +221,47 @@ public:
   const VkFormat m_oitWeightedColorFormat  = VK_FORMAT_R16G16B16A16_SFLOAT;
   const VkFormat m_oitWeightedRevealFormat = VK_FORMAT_R16_SFLOAT;
 
+  uint32_t m_frame = 0;
+
+public:
   Sample()
-      : NVPWindow()
+      : AppWindowProfilerVK(false, true)
   {
+#if defined(NDEBUG)
+    setVsync(false);
+#endif
   }
 
   /////////////////////////////////////////////////////////////////////////////
   // Callbacks                                                               //
   /////////////////////////////////////////////////////////////////////////////
-  virtual void onWindowResize(int w = 0, int h = 0) override;
-  virtual void onMouseMotion(int x, int y) override;
-  virtual void onMouseButton(MouseButton button, ButtonAction action, int mods, int x, int y) override;
-  virtual void onMouseWheel(int delta) override;
-  virtual void onKeyboardChar(unsigned char key, int mods, int x, int y) override;
-  virtual void onKeyboard(NVPWindow::KeyCode key, ButtonAction action, int mods, int x, int y) override;
+  void resize(int width, int height) override;
+  bool mouse_pos(int x, int y) override;
+  bool mouse_button(int button, int action) override;
+  bool mouse_wheel(int wheel) override;
+  bool key_char(int key) override;
+  bool key_button(int button, int action, int mods) override;
 
   /////////////////////////////////////////////////////////////////////////////
   // Object Creation, Destruction, and Recreation                            //
   /////////////////////////////////////////////////////////////////////////////
 
   // Sets up the sample. Returns whether or not setup succeeded.
-  bool init(int posX, int posY, int width, int height, const char* title);
+  bool begin() override;
 
-  // Destroys any initialized swap chain-dependent components, then recreates them.
-  // Queues commands onto the given command buffer, so that this can be called from begin().
-  // It turns out we don't need the width and height here!
-  void resizeCommands(nvvk::ScopeCommandBuffer& scopedCmdBuffer, bool forceRebuildAll);
+  // Immediately creates and executes a command buffer that updates the state
+  // of the renderer. Usually called from cmdUpdateRendererFromState. Should
+  // usually be only called when m_state != m_lastState.
+  void updateRendererImmediate(bool swapchainSizeChanged, bool forceRebuildAll);
 
-  // This function compares m_state to m_lastState. If m_state changed, then
+  // Compares m_state to m_lastState. If m_state changed, then
   // it updates the parts of the rendering system that need to change, such
   // as by reloading shaders and by regenerating internal buffers.
   // It also essentially tracks which objects depend on which parameters.
-  void updateRendererFromState(VkCommandBuffer cmdBuffer, bool forceRebuildAll);
+  void cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchainSizeChanged, bool forceRebuildAll);
 
   // Tear down the sample, essentially by running creation in reverse
-  void close();
+  void end() override;
 
   void destroyTextureSampler();
 
@@ -293,7 +286,7 @@ public:
   void initScene(VkCommandBuffer commandBuffer);
 
   // Device must not be using resource when called.
-  void destroyImages();
+  void destroyFrameImages();
 
   // Creates the intermediate buffers used for order-independent transparency -
   // these are all of the IMG_* textures referenced in common.h. Unlike static
@@ -373,6 +366,12 @@ public:
                                     VkRenderPass                renderPass,
                                     uint32_t                    subpass = 0);
 
+  // Creates and begins a command buffer that will only be submitted once.
+  VkCommandBuffer createTempCmdBuffer();
+
+  // Sets m_viewportGUI and m_scissorGUI based on the current screen size.
+  void setUpViewportsAndScissors();
+
   /////////////////////////////////////////////////////////////////////////////
   // GUI                                                                     //
   /////////////////////////////////////////////////////////////////////////////
@@ -391,7 +390,7 @@ public:
   // Displays the Dear ImGui interface.
   // This interface includes tooltips for each of the elements, and also shows
   // or hides fields based on the current OIT algorithm.
-  void DoGUI();
+  void DoGUI(int width, int height, double time);
 
   /////////////////////////////////////////////////////////////////////////////
   // Main rendering logic                                                    //
@@ -403,10 +402,13 @@ public:
   // samples and downscaling in the process.
   // Note that this will only do a box filter - more complex antialiasing
   // filters require using a custom compute shader.
-  void copyOffscreenToBackBuffer(VkCommandBuffer cmdBuffer);
+  void copyOffscreenToBackBuffer(int winWidth, int winHeight, ImDrawData* imguiDrawData);
+
+  // Performs a queue submission.
+  void submissionExecute(VkFence fence = NULL, bool useImageReadWait = false, bool useImageWriteSignals = false);
 
   // Main loop
-  void display();
+  void think(double time) override;
 
   // Renders the scene including transparency to m_colorImage.
   void render(VkCommandBuffer& cmdBuffer);

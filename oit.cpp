@@ -30,12 +30,12 @@
 // render passes, descriptor sets, and A-buffers, but not swapchain creation.)
 
 #include "oit.h"
+#include <nvvk/error_vk.hpp>
 #include <nvvk/renderpasses_vk.hpp>
 
-void Sample::destroyImages()
+void Sample::destroyFrameImages()
 {
   m_colorImage.destroy(m_context, m_allocatorDma);
-  m_downsampleTargetImage.destroy(m_context, m_allocatorDma);
   m_depthImage.destroy(m_context, m_allocatorDma);
   m_oitABuffer.destroy(m_context, m_allocatorDma);
   m_oitAuxImage.destroy(m_context, m_allocatorDma);
@@ -44,15 +44,19 @@ void Sample::destroyImages()
   m_oitCounterImage.destroy(m_context, m_allocatorDma);
   m_oitWeightedColorImage.destroy(m_context, m_allocatorDma);
   m_oitWeightedRevealImage.destroy(m_context, m_allocatorDma);
+  m_downsampleImage.destroy(m_context, m_allocatorDma);
+  m_guiCompositeImage.destroy(m_context, m_allocatorDma);
 }
 
 void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
 {
-  destroyImages();
+  destroyFrameImages();
 
-  // We implement supersample anti-aliasing by rendering to a larger texture
-  const int bufferWidth  = m_swapChain.getWidth() * m_state.supersample;
-  const int bufferHeight = m_swapChain.getHeight() * m_state.supersample;
+  const int swapchainWidth = m_windowState.m_swapSize[0];
+  const int swapchainHeight = m_windowState.m_swapSize[1];
+  // We implement supersample anti-aliasing by rendering to a larger texture.
+  const int bufferWidth  = swapchainWidth * m_state.supersample;
+  const int bufferHeight = swapchainHeight * m_state.supersample;
 
   // Offscreen color and depth buffer
   {
@@ -62,14 +66,6 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
     m_colorImage.setName(m_debug, "m_colorImage");
     // We'll put it into the layout for a color attachment later.
 
-    // Intermediate storage for resolve - 1spp, and with almost the same format
-    // as the backbuffer (but sRGB). In the future, we could replace this with
-    // a compute kernel that does downsampling manually.
-    m_downsampleTargetImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT,
-                                   VK_FORMAT_B8G8R8A8_SRGB, m_swapChain.getWidth(), m_swapChain.getHeight(), 1,
-                                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 1);
-    m_colorImage.setName(m_debug, "m_downsampleTargetImage");
-
     // Depth image
     VkFormat depthFormat = nvvk::findDepthFormat(m_context.m_physicalDevice);
 
@@ -77,14 +73,24 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
                         bufferWidth, bufferHeight, 1, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, m_state.msaa);
     m_depthImage.setName(m_debug, "m_depthImage");
 
-    // Unfortunately, we do need to transition the depth image here, since the
-    // render pass assumes the depth image already has the optimal
-    // depth-stencil layout.
+    // Intermediate storage for resolve - 1spp, swapchain sized, with the same format as the color image.
+    m_downsampleImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT,
+                             m_colorImage.c_format, swapchainWidth, swapchainHeight, 1,
+                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                             1);
+    m_downsampleImage.setName(m_debug, "m_downsampleTargetImage");
+    
+    // Intermediate storage for rendering the GUI - 1spp, swapchain sized, with almost the same format as the swapchain
+    // (with the exception that the channels have to be in the same order as m_colorImage)
+    m_guiCompositeImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT,
+                               VK_FORMAT_B8G8R8A8_UNORM, swapchainWidth, swapchainHeight, 1,
+                               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                               1);
+    m_guiCompositeImage.setName(m_debug, "m_guiCompositeImage");
 
-    m_depthImage.transitionTo(cmdBuffer,                                         // Command buffer
-                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,  // New layout
-                              VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,                // Stages to block
-                              VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    // Initial resource transitions
+    m_colorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+    m_depthImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
   }
 
   // A-buffers
@@ -174,8 +180,6 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
   // Auxiliary images
   // The ways that auxiliary images can be used
   const VkImageUsageFlags auxUsages = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-  // The pipeline stages that auxiliary images can be bound to
-  const VkPipelineStageFlags auxPipelineStages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
   // The ways that auxiliary images can be accessed
   const VkAccessFlags auxAccesses = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
   // if `sampleShading`, then each auxiliary image is actually a texture array:
@@ -186,7 +190,7 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
     m_oitAuxImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, VK_FORMAT_R32_UINT,
                          bufferWidth, bufferHeight, auxLayers, auxUsages);
     m_oitAuxImage.setName(m_debug, "m_oitAuxImage");
-    m_oitAuxImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_GENERAL, auxPipelineStages, auxAccesses);
+    m_oitAuxImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_GENERAL, auxAccesses);
   }
 
   if(allocAuxSpin)
@@ -194,7 +198,7 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
     m_oitAuxSpinImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, VK_FORMAT_R32_UINT,
                              bufferWidth, bufferHeight, auxLayers, auxUsages);
     m_oitAuxSpinImage.setName(m_debug, "m_oitAuxSpinImage");
-    m_oitAuxSpinImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_GENERAL, auxPipelineStages, auxAccesses);
+    m_oitAuxSpinImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_GENERAL, auxAccesses);
   }
 
   if(allocAuxDepth)
@@ -202,7 +206,7 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
     m_oitAuxDepthImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT,
                               VK_FORMAT_R32_UINT, bufferWidth, bufferHeight, auxLayers, auxUsages);
     m_oitAuxDepthImage.setName(m_debug, "m_oitAuxDepthImage");
-    m_oitAuxDepthImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_GENERAL, auxPipelineStages, auxAccesses);
+    m_oitAuxDepthImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_GENERAL, auxAccesses);
   }
 
   if(allocCounter)
@@ -211,7 +215,7 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
     m_oitCounterImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT, VK_FORMAT_R32_UINT,
                              1, 1, 1, auxUsages);
     m_oitCounterImage.setName(m_debug, "m_oitCounter");
-    m_oitCounterImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_GENERAL, auxPipelineStages, auxAccesses);
+    m_oitCounterImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_GENERAL, auxAccesses);
   }
 
   if(m_state.algorithm == OIT_WEIGHTED)
@@ -229,9 +233,9 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
     // Transition both of them to color attachments, which is the way they'll first be used:
     // (see m_renderPassWeighted for reference)
     m_oitWeightedColorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0);
+                                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
     m_oitWeightedRevealImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0);
+                                          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
   }
 }
 
@@ -411,17 +415,20 @@ void Sample::destroyRenderPasses()
 {
   if(m_renderPassColorDepthClear != nullptr)
   {
-    vkDestroyRenderPass(m_context, m_renderPassColorDepthClear, nullptr);
-  }
-
-  if(m_renderPassWeighted != nullptr)
-  {
-    vkDestroyRenderPass(m_context, m_renderPassWeighted, nullptr);
+    vkDestroyRenderPass(m_context, m_renderPassColorDepthClear, NULL);
+    m_renderPassColorDepthClear = nullptr;
   }
 
   if(m_renderPassGUI != nullptr)
   {
-    vkDestroyRenderPass(m_context, m_renderPassGUI, nullptr);
+    vkDestroyRenderPass(m_context, m_renderPassGUI, NULL);
+    m_renderPassGUI = nullptr;
+  }
+
+  if(m_renderPassWeighted != nullptr)
+  {
+    vkDestroyRenderPass(m_context, m_renderPassWeighted, NULL);
+    m_renderPassWeighted = nullptr;
   }
 }
 
@@ -435,32 +442,33 @@ void Sample::createRenderPasses()
   // We create this manually since (as of this writing) nvvk::createRenderPass
   // doesn't support multisampling.
   {
-    std::vector<VkAttachmentDescription> allAttachments;
+    std::array<VkAttachmentDescription, 2> attachments = {};  // Color attachment, depth attachment
+    // Color attachment
+    attachments[0].format         = m_colorImage.c_format;
+    attachments[0].samples        = getSampleCountFlagBits(m_state.msaa);
+    attachments[0].loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[0].storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[0].initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachments[0].finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    attachments[0].flags          = 0;
 
-    VkAttachmentDescription colorAttachment = {};
-    colorAttachment.format                  = m_colorImage.c_format;
-    colorAttachment.samples                 = static_cast<VkSampleCountFlagBits>(m_state.msaa);
-    colorAttachment.loadOp                  = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAttachment.storeOp                 = VK_ATTACHMENT_STORE_OP_STORE;
-    colorAttachment.stencilLoadOp           = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp          = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    colorAttachment.initialLayout           = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAttachment.finalLayout             = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
+    // Color attachment reference
     VkAttachmentReference colorAttachmentRef = {};
-    colorAttachmentRef.attachment            = static_cast<uint32_t>(allAttachments.size());
+    colorAttachmentRef.attachment            = 0;
     colorAttachmentRef.layout                = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    allAttachments.push_back(colorAttachment);
 
-    VkAttachmentDescription depthAttachment = colorAttachment;
-    depthAttachment.format                  = m_depthImage.c_format;
-    depthAttachment.initialLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depthAttachment.finalLayout             = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    // Depth attachment
+    attachments[1]               = attachments[0];
+    attachments[1].format        = m_depthImage.c_format;
+    attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    attachments[1].finalLayout   = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+    // Depth attachment reference
     VkAttachmentReference depthAttachmentRef = {};
-    depthAttachmentRef.attachment            = static_cast<uint32_t>(allAttachments.size());
+    depthAttachmentRef.attachment            = 1;
     depthAttachmentRef.layout                = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    allAttachments.push_back(depthAttachment);
 
     // 1 subpass
     VkSubpassDescription subpass    = {};
@@ -469,24 +477,55 @@ void Sample::createRenderPasses()
     subpass.pColorAttachments       = &colorAttachmentRef;
     subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
-    VkSubpassDependency dependency = {};
-    dependency.srcSubpass          = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass          = 0;
-    dependency.srcStageMask        = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstStageMask        = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask       = 0;
-    dependency.dstAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    // No dependency on external data
+    VkRenderPassCreateInfo rpInfo = nvvk::make<VkRenderPassCreateInfo>();
+    rpInfo.attachmentCount        = static_cast<uint32_t>(attachments.size());
+    rpInfo.pAttachments           = attachments.data();
+    rpInfo.subpassCount           = 1;
+    rpInfo.pSubpasses             = &subpass;
+    rpInfo.dependencyCount        = 0;
 
-    VkRenderPassCreateInfo renderPassInfo = nvvk::make<VkRenderPassCreateInfo>();
-    renderPassInfo.attachmentCount        = static_cast<uint32_t>(allAttachments.size());
-    renderPassInfo.pAttachments           = allAttachments.data();
-    renderPassInfo.dependencyCount        = 1;
-    renderPassInfo.pDependencies          = &dependency;
-    renderPassInfo.subpassCount           = 1;
-    renderPassInfo.pSubpasses             = &subpass;
-    VkResult result = vkCreateRenderPass(m_context, &renderPassInfo, nullptr, &m_renderPassColorDepthClear);
-    assert(result == VK_SUCCESS);
+    NVVK_CHECK(vkCreateRenderPass(m_context, &rpInfo, NULL, &m_renderPassColorDepthClear));
     m_debug.setObjectName(m_renderPassColorDepthClear, "m_renderPassColorDepthClear");
+  }
+
+  // m_renderPassGUI
+  {
+    // This is a bit tricky, and ties in to exactly how copyOffscreenToBackBuffer works.
+    // It takes m_guiCompositeImage in layout TRANSFER_DST_OPTIMAL. Then it transitions it to
+    // TRANSFER_COLOR_ATTACHMENT_OPTIMAL for rendering, and then transitions it to TRANSFER_SRC_OPTIMAL
+    // for blitting to the swapchain.
+
+    // Only one attachment
+    VkAttachmentDescription attachment = {};
+    attachment.format                  = m_guiCompositeImage.c_format;
+    attachment.samples                 = VK_SAMPLE_COUNT_1_BIT;
+    attachment.loadOp                  = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.storeOp                 = VK_ATTACHMENT_STORE_OP_STORE;
+    attachment.initialLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    attachment.finalLayout             = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;  // for blit operation
+    attachment.flags                   = 0;
+
+    VkAttachmentReference colorAttachmentRef = {};
+    colorAttachmentRef.attachment            = 0;
+    colorAttachmentRef.layout                = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass    = {};
+    subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount    = 1;
+    subpass.pColorAttachments       = &colorAttachmentRef;
+    subpass.pDepthStencilAttachment = nullptr;
+
+    // TODO: Should this have a dependency on external data?
+    VkRenderPassCreateInfo rpInfo = nvvk::make<VkRenderPassCreateInfo>();
+    rpInfo.attachmentCount        = 1;
+    rpInfo.pAttachments           = &attachment;
+    rpInfo.subpassCount           = 1;
+    rpInfo.pSubpasses             = &subpass;
+    rpInfo.dependencyCount        = 0;
+
+    NVVK_CHECK(vkCreateRenderPass(m_context, &rpInfo, NULL, &m_renderPassGUI));
+    m_debug.setObjectName(m_renderPassGUI, "m_renderPassGUI");
   }
 
   // m_renderPassWeighted
@@ -594,22 +633,9 @@ void Sample::createRenderPasses()
     renderPassInfo.pDependencies          = subpassDependencies.data();
     renderPassInfo.subpassCount           = static_cast<uint32_t>(subpasses.size());
     renderPassInfo.pSubpasses             = subpasses.data();
-    VkResult result = vkCreateRenderPass(m_context, &renderPassInfo, nullptr, &m_renderPassWeighted);
-    assert(result == VK_SUCCESS);
+    NVVK_CHECK(vkCreateRenderPass(m_context, &renderPassInfo, nullptr, &m_renderPassWeighted));
     m_debug.setObjectName(m_renderPassWeighted, "m_renderPassWeighted");
   }
-
-  // Swap chain framebuffer, no depth, no MSAA
-  std::vector<VkFormat> guiColorAttachmentFormats{m_swapChain.getFormat()};
-  m_renderPassGUI = nvvk::createRenderPass(m_context,                  // Device
-                                           guiColorAttachmentFormats,  // List of color attachment formats,
-                                           VK_FORMAT_UNDEFINED,        // No depth attachment
-                                           1,                          // Number of subpasses
-                                           false,                      // Don't clear color
-                                           false,                      // Don't clear depth
-                                           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,  // Initial layout
-                                           VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);          // Final layout
-  m_debug.setObjectName(m_renderPassGUI, "m_renderPassGUI");
 }
 
 void Sample::updateShaderDefinitions()

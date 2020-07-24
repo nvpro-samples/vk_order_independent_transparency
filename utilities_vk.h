@@ -32,11 +32,6 @@
 // binding description and attribute description for the geometry that this
 // sample specifically uses.
 
-#if defined(_WIN32) && (!defined(VK_USE_PLATFORM_WIN32_KHR))
-#define VK_USE_PLATFORM_WIN32_KHR
-#endif  // #if defined(_WIN32) && (!defined(VK_USE_PLATFORM_WIN32_KHR))
-#pragma warning(disable : 26812)  // Disable the warning about Vulkan's enumerations being untyped in VS2019.
-
 #include <array>
 #include <nvh/geometry.hpp>
 #include <nvmath/nvmath.h>
@@ -176,13 +171,13 @@ struct BufferAndView
 // optimal tiling, in an undefined layout, with the VK_IMAGE_USAGE_SAMPLED_BIT flag
 // (and possibly additional flags), and accessible only from a single queue family.
 inline nvvk::ImageDma createImageSimple(nvvk::AllocatorDma& allocator,
-                                 VkImageType         imageType,
-                                 VkFormat            format,
-                                 uint32_t            width,
-                                 uint32_t            height,
-                                 uint32_t            arrayLayers          = 1,
-                                 VkImageUsageFlags   additionalUsageFlags = 0,
-                                 uint32_t            numSamples           = 1)
+                                        VkImageType         imageType,
+                                        VkFormat            format,
+                                        uint32_t            width,
+                                        uint32_t            height,
+                                        uint32_t            arrayLayers          = 1,
+                                        VkImageUsageFlags   additionalUsageFlags = 0,
+                                        uint32_t            numSamples           = 1)
 {
   // There are several different ways to create images using the NVVK framework.
   // Here, we'll use AllocatorDma::createImage.
@@ -204,34 +199,43 @@ inline nvvk::ImageDma createImageSimple(nvvk::AllocatorDma& allocator,
   return allocator.createImage(imageInfo);
 }
 
+inline VkSampleCountFlagBits getSampleCountFlagBits(int msaa)
+{
+  return static_cast<VkSampleCountFlagBits>(msaa);
+}
+
 // A simple wrapper for writing a vkCmdPipelineBarrier for doing things such as
 // image layout transitions.
-inline void doTransition(VkCommandBuffer      cmdBuffer,
-                  VkImage              image,
-                  VkImageAspectFlags   aspect,
-                  VkImageLayout        srcLayout,
-                  VkPipelineStageFlags srcStages,
-                  VkAccessFlags        srcAccesses,
-                  VkImageLayout        dstLayout,    // How the image will be laid out in memory.
-                  VkPipelineStageFlags dstStages,    // The stages that the image will be accessible from
-                  VkAccessFlags        dstAccesses,  // The ways that the app will be able to access the image.
-                  uint32_t             numLayers)                // The number of array layers in the image.
+inline void cmdImageTransition(VkCommandBuffer    cmd,
+                               VkImage            img,
+                               VkImageAspectFlags aspects,
+                               VkAccessFlags      src,
+                               VkAccessFlags      dst,
+                               VkImageLayout      oldLayout,
+                               VkImageLayout      newLayout)
 {
-  VkImageMemoryBarrier barrier            = nvvk::make<VkImageMemoryBarrier>();
-  barrier.oldLayout                       = srcLayout;
-  barrier.newLayout                       = dstLayout;
-  barrier.srcQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex             = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image                           = image;
-  barrier.subresourceRange.aspectMask     = aspect;
-  barrier.subresourceRange.baseMipLevel   = 0;
-  barrier.subresourceRange.levelCount     = 1;
-  barrier.subresourceRange.baseArrayLayer = 0;
-  barrier.subresourceRange.layerCount     = numLayers;
-  barrier.srcAccessMask                   = srcAccesses;
-  barrier.dstAccessMask                   = dstAccesses;
 
-  vkCmdPipelineBarrier(cmdBuffer, srcStages, dstStages, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+  VkPipelineStageFlags srcPipe = nvvk::makeAccessMaskPipelineStageFlags(src);
+  VkPipelineStageFlags dstPipe = nvvk::makeAccessMaskPipelineStageFlags(dst);
+
+  VkImageSubresourceRange range;
+  memset(&range, 0, sizeof(range));
+  range.aspectMask     = aspects;
+  range.baseMipLevel   = 0;
+  range.levelCount     = VK_REMAINING_MIP_LEVELS;
+  range.baseArrayLayer = 0;
+  range.layerCount     = VK_REMAINING_ARRAY_LAYERS;
+
+  VkImageMemoryBarrier memBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+  memBarrier.sType                = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  memBarrier.dstAccessMask        = dst;
+  memBarrier.srcAccessMask        = src;
+  memBarrier.oldLayout            = oldLayout;
+  memBarrier.newLayout            = newLayout;
+  memBarrier.image                = img;
+  memBarrier.subresourceRange     = range;
+
+  vkCmdPipelineBarrier(cmd, srcPipe, dstPipe, VK_FALSE, 0, NULL, 0, NULL, 1, &memBarrier);
 }
 
 // An ImageAndView is an NVVK image (i.e. Vulkan image and underlying memory),
@@ -250,7 +254,6 @@ struct ImageAndView
   // Information for pipeline transitions. These should generally only be
   // modified via transitionTo or when ending render passes.
   VkImageLayout        currentLayout = VK_IMAGE_LAYOUT_UNDEFINED;  // The current layout of the image in GPU memory (e.g. GENERAL or COLOR_ATTACHMENT_OPTIMAL)
-  VkPipelineStageFlags currentStages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;  // The set of stages that this texture may be bound to (e.g. TOP_OF_PIPE or FRAGMENT_SHADER)
   VkAccessFlags        currentAccesses = 0;  // How the memory of this texture can be accessed (e.g. shader read/write, color attachment read/write)
 
 public:
@@ -290,14 +293,12 @@ public:
       allocator.destroy(image);
       view            = nullptr;
       currentLayout   = VK_IMAGE_LAYOUT_UNDEFINED;
-      currentStages   = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
       currentAccesses = 0;
     }
   }
 
   void transitionTo(VkCommandBuffer      cmdBuffer,
                     VkImageLayout        dstLayout,  // How the image will be laid out in memory.
-                    VkPipelineStageFlags dstStages,  // The stages that the image will be accessible from
                     VkAccessFlags        dstAccesses)       // The ways that the app will be able to access the image.
   {
     // Note that in larger applications, we could batch together pipeline
@@ -318,12 +319,10 @@ public:
       aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     }
 
-    doTransition(cmdBuffer, image.image, aspectMask, currentLayout, currentStages, currentAccesses, dstLayout,
-                 dstStages, dstAccesses, c_layers);
+    cmdImageTransition(cmdBuffer, image.image, aspectMask, currentAccesses, dstAccesses, currentLayout, dstLayout);
 
     // Update current layout, stages, and accesses
     currentLayout   = dstLayout;
-    currentStages   = dstStages;
     currentAccesses = dstAccesses;
   }
 

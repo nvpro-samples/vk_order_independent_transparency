@@ -40,10 +40,6 @@
 // utilities_vk.h: Helper functions that can exist without a sample.
 // main.cpp: All other functions not specific to OIT.
 
-#if defined(_WIN32) && (!defined(VK_USE_PLATFORM_WIN32_KHR))
-#define VK_USE_PLATFORM_WIN32_KHR
-#endif  // #if defined(_WIN32) && (!defined(VK_USE_PLATFORM_WIN32_KHR))
-
 #pragma warning(disable : 26812)  // Disable the warning about Vulkan's enumerations being untyped in VS2019.
 
 #if defined(_WIN32)
@@ -104,140 +100,57 @@ const float GLOBAL_SCALE = 8.0f;
 // Callbacks                                                                 //
 ///////////////////////////////////////////////////////////////////////////////
 
-void Sample::onWindowResize(int w, int h)
+void Sample::resize(int width, int height)
 {
-  NVPWindow::onWindowResize(w, h);
-  // Don't do anything when the window is minimized:
-  if(w != 0 && h != 0)
-  {
-    m_swapChain.update(w, h, m_vsync);
-    {
-      nvvk::ScopeCommandBuffer scopedCmdBuffer(m_context, m_context.m_queueGCT, m_context.m_queueGCT);
-      resizeCommands(scopedCmdBuffer, false);
-      // scopedCmdBuffer goes out of scope here and runs its commands.
-    }
-    // Complete copies and release staging memory.
-    m_allocatorDma.finalizeAndReleaseStaging();
-  }
-  else
-  {
-    // Update the previous width and height even if the size was 0 so that
-    // resizeCommands knows it needs to rebuild things
-    m_lastSwapChainWidth  = w;
-    m_lastSwapChainHeight = h;
-  }
+  assert(width == m_windowState.m_swapSize[0]);
+  assert(height == m_windowState.m_swapSize[1]);
+  updateRendererImmediate(true, false);
 }
 
-void Sample::onMouseMotion(int x, int y)
+bool Sample::mouse_pos(int x, int y)
 {
-  if(m_state.drawUI)
-    if(ImGuiH::mouse_pos(x, y))
-      return;  // Captured by Dear ImGui
-  m_controllerState.mouseCurrent[0] = static_cast<nvmath::nv_scalar>(x);
-  m_controllerState.mouseCurrent[1] = static_cast<nvmath::nv_scalar>(y);
+  return ImGuiH::mouse_pos(x, y);
 }
 
-void Sample::onMouseButton(MouseButton button, ButtonAction action, int mods, int x, int y)
+bool Sample::mouse_button(int button, int action)
 {
-  if(m_state.drawUI)
-    if(ImGuiH::mouse_button(button, action))
-      return;  // Captured by Dear ImGui
-
-  int flags = 0;
-  switch(button)
-  {
-    case MouseButton::MOUSE_BUTTON_LEFT:
-      flags = 1;
-      break;
-    case MouseButton::MOUSE_BUTTON_MIDDLE:
-      flags = 2;
-      break;
-    case MouseButton::MOUSE_BUTTON_RIGHT:
-      flags = 4;
-      break;
-    default:
-      break;
-  }
-  if(action == ButtonAction::BUTTON_PRESS)
-  {
-    // Add the flags
-    m_controllerState.mouseButtonFlags |= flags;
-  }
-  else if(action == ButtonAction::BUTTON_RELEASE)
-  {
-    // Remove the flags
-    m_controllerState.mouseButtonFlags &= ~flags;
-  }
+  return ImGuiH::mouse_button(button, action);
 }
 
-void Sample::onMouseWheel(int delta)
+bool Sample::mouse_wheel(int wheel)
 {
-  static int imGuiMouseWheel = 0;
-  imGuiMouseWheel += delta;
-  if(m_state.drawUI)
-    if(ImGuiH::mouse_wheel(delta))
-      return;  // Captured by Dear ImGui
-  m_controllerState.mouseWheel += delta;
+  return ImGuiH::mouse_wheel(wheel);
 }
 
-void Sample::onKeyboardChar(unsigned char key, int mods, int x, int y)
+bool Sample::key_char(int key)
 {
-  if(m_state.drawUI)
-    if(ImGuiH::key_char(key))
-      return;  // Captured by Dear ImGui
-
-  NVPWindow::onKeyboardChar(key, mods, x, y);
+  return ImGuiH::key_char(key);
 }
 
-void Sample::onKeyboard(NVPWindow::KeyCode key, ButtonAction action, int mods, int x, int y)
+bool Sample::key_button(int button, int action, int mods)
 {
-  if(m_state.drawUI)
-    if(ImGuiH::key_button(static_cast<int>(key), action, mods))
-      return;  // Captured by Dear ImGui
-
-  if(key == NVPWindow::KEY_V && action == NVPWindow::BUTTON_PRESS)
-  {
-    m_vsync = !m_vsync;
-    onWindowResize(m_swapChain.getWidth(), m_swapChain.getHeight());
-  }
+  return ImGuiH::key_button(button, action, mods);
 }
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // Object Creation, Destruction, and Recreation                              //
 ///////////////////////////////////////////////////////////////////////////////
 
-bool Sample::init(int posX, int posY, int width, int height, const char* title)
+bool Sample::begin()
 {
-  // Open the window, not requiring a GL context
-  if(!open(posX, posY, width, height, title, false))
-  {
-    return false;  // Initialization failed
-  }
+  m_profilerPrint = true;
+  m_timeInTitle   = true;
 
-  // Initialize the profiler. m_context can be implicitly converted to a VkDevice.
-  m_profilerVK.init(m_context, m_context.m_physicalDevice);
-  // Create the window surface (using GLFW, our windowing library)
-  // m_internal is NVPWindow's GLFWWindow pointer.
-  VkResult vkResult = glfwCreateWindowSurface(m_context.m_instance, m_internal, nullptr, &m_surface);
-  assert(vkResult == VK_SUCCESS);
-  // Initialize the swapchain (which will use a B8R8G8A8 format by default)
-  // Make sure the GCT queue can present to the given surface
-  bool gctResult = m_context.setGCTQueueWithPresent(m_surface);
-  assert(gctResult);
-  m_swapChain.init(m_context, m_context.m_physicalDevice, m_context.m_queueGCT, m_context.m_queueGCT.familyIndex, m_surface);
-  m_swapChain.update(width, height, m_vsync);
-
-  // Initialize Dear ImGui
-  ImGuiH::Init(m_swapChain.getWidth(), m_swapChain.getHeight(), this);
-  ImGui::InitVK(m_context, m_context.m_physicalDevice, m_context.m_queueGCT.queue, m_context.m_queueGCT.familyIndex,
-                m_renderPassGUI, 0);     // ImGui will use its own render pass
+  // Initialize Dear ImGui (we'll call InitVK later)
+  ImGuiH::Init(m_windowState.m_winSize[0], m_windowState.m_winSize[1], this);
   ImGui::GetIO().IniFilename = nullptr;  // Don't create a .ini file for storing data across application launches
+  // Initialize Dear ImGui's Vulkan renderer:
+  ImGui::InitVK(m_context, m_context.m_physicalDevice, m_context.m_queueGCT, m_context.m_queueGCT.familyIndex, nullptr, 0);  // ImGui will use its own render pass
 
   // Initialize all Vulkan components that will be constant throughout the application lifecycle.
   // Components that can change are handled by updateRendererFromState.
   m_ringFences.init(m_context);
-  m_ringCmdPool.init(m_context, m_context.m_queueGCT, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
+  m_ringCmdPool.init(m_context, m_context.m_queueGCT.familyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
   m_submission.init(m_context.m_queueGCT.queue);
   m_debug.setup(m_context);
 
@@ -252,12 +165,13 @@ bool Sample::init(int posX, int posY, int width, int height, const char* title)
     // Add search paths for files and includes
     m_shaderModuleManager.addDirectory("GLSL_" PROJECT_NAME);  // For when running in the install directory
     m_shaderModuleManager.addDirectory(".");
+    m_shaderModuleManager.addDirectory(NVPSystem::exePath() + PROJECT_RELDIRECTORY);
     m_shaderModuleManager.addDirectory(NVPSystem::exePath() + PROJECT_RELDIRECTORY + "..");
     m_shaderModuleManager.addDirectory("..");     // for when working directory in Debug is $(ProjectDir)
     m_shaderModuleManager.addDirectory("../..");  // for when using $(TargetDir)
-    m_shaderModuleManager.addDirectory("../../sandbox/" PROJECT_NAME);     // for when using $(TargetDir)
-    m_shaderModuleManager.addDirectory("../../../sandbox/" PROJECT_NAME);  // for when using $(TargetDir) and build_all
-    m_shaderModuleManager.addDirectory("../sandbox/" PROJECT_NAME);  // For when running from the bin_x64 directory on Linux
+    m_shaderModuleManager.addDirectory("../shipped/" PROJECT_NAME);  // For when running from the bin_x64 directory on Linux
+    m_shaderModuleManager.addDirectory("../../shipped/" PROJECT_NAME);     // for when using $(TargetDir)
+    m_shaderModuleManager.addDirectory("../../../shipped/" PROJECT_NAME);  // for when using $(TargetDir) and build_all
     // We have to manually set up paths to files we could include.
     m_shaderModuleManager.registerInclude("common.h");
     m_shaderModuleManager.registerInclude("oitColorDepthDefines.glsl");
@@ -265,15 +179,9 @@ bool Sample::init(int posX, int posY, int width, int height, const char* title)
     m_shaderModuleManager.registerInclude("shaderCommon.glsl");
   }
 
-  // Call resizeCommands to set up the rest of the renderer with the initial
-  // swapchain size:
+  // Call updateRendererImmediate to set up the rest of the renderer with the initial swapchain size:
   {
-    // We use the same indices here as createCommandPool:
-    nvvk::ScopeCommandBuffer scopedCmdBuffer(m_context, m_context.m_queueGCT, m_context.m_queueGCT);
-    resizeCommands(scopedCmdBuffer, true);
-    // scopedCmdBuffer goes out of scope, which calls its destroyer,
-    // which ends the command buffer, submits it, and waits idle; if any
-    // errors have occurred, this will also call exit(-1).
+    updateRendererImmediate(true, true);
   }
 
   // Register enumerations with the Dear ImGui registry
@@ -321,29 +229,33 @@ bool Sample::init(int posX, int posY, int width, int height, const char* title)
   m_sceneUbo.alphaMin   = 0.2f;
   m_sceneUbo.alphaWidth = 0.3f;
 
+  m_frame     = 0;
+  m_lastState = m_state;
+
   return true;  // Initialization succeeded
 }
 
-void Sample::resizeCommands(nvvk::ScopeCommandBuffer& scopedCmdBuffer, bool forceRebuildAll)
+void Sample::updateRendererImmediate(bool swapchainSizeChanged, bool forceRebuildAll)
 {
+  VkCommandBuffer cmd = createTempCmdBuffer();
+  cmdUpdateRendererFromState(cmd, swapchainSizeChanged, forceRebuildAll);
+  vkEndCommandBuffer(cmd);
+
+  m_submission.enqueue(cmd);
+  submissionExecute();
   vkDeviceWaitIdle(m_context);
-  m_swapChain.cmdUpdateBarriers(scopedCmdBuffer);
-  createUniformBuffers();
-  updateRendererFromState(scopedCmdBuffer, forceRebuildAll);
-  ImGui::ReInitPipelinesVK(m_renderPassGUI, 0);
+  m_ringFences.reset();
+  m_ringCmdPool.reset();
 }
 
-void Sample::updateRendererFromState(VkCommandBuffer cmdBuffer, bool forceRebuildAll)
+void Sample::cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchainSizeChanged, bool forceRebuildAll)
 {
   m_state.recomputeAntialiasingSettings();
 
   // Determine what needs to be rebuilt
+  swapchainSizeChanged |= forceRebuildAll;
 
-  const bool swapchainSizeChanged = (m_swapChain.getWidth() != m_lastSwapChainWidth)       //
-                                    || (m_swapChain.getHeight() != m_lastSwapChainHeight)  //
-                                    || forceRebuildAll;
-
-  const bool vsyncChanged = (m_lastVsync != m_vsync) || forceRebuildAll;
+  const bool vsyncChanged = (m_lastVsync != getVsync()) || forceRebuildAll;
 
   const bool shadersNeedUpdate = (m_state.algorithm != m_lastState.algorithm)             //
                                  || (m_state.oitLayers != m_lastState.oitLayers)          //
@@ -388,6 +300,13 @@ void Sample::updateRendererFromState(VkCommandBuffer cmdBuffer, bool forceRebuil
   if(anythingChanged)
   {
     vkDeviceWaitIdle(m_context);
+    LOGI("framebuffer: %d x %d (%d msaa)\n", m_windowState.m_swapSize[0], m_windowState.m_swapSize[1], m_state.msaa);
+
+    if(vsyncChanged || swapchainSizeChanged)
+    {
+      m_swapChain.cmdUpdateBarriers(cmdBuffer);
+      createUniformBuffers();
+    }
 
     if(sceneNeedsReinit)
     {
@@ -407,6 +326,7 @@ void Sample::updateRendererFromState(VkCommandBuffer cmdBuffer, bool forceRebuil
     if(renderPassesNeedReinit)
     {
       createRenderPasses();
+      ImGui::ReInitPipelinesVK(m_renderPassGUI);
     }
 
     if(framebuffersAndDescriptorsNeedReinit)
@@ -424,20 +344,15 @@ void Sample::updateRendererFromState(VkCommandBuffer cmdBuffer, bool forceRebuil
     {
       createGraphicsPipelines();
     }
-  }
 
-  // Store this call's GUI state to compare to next call
-  m_lastState           = m_state;
-  m_lastSwapChainWidth  = m_swapChain.getWidth();
-  m_lastSwapChainHeight = m_swapChain.getHeight();
-  m_lastVsync           = m_vsync;
+    setUpViewportsAndScissors();
+    m_lastVsync = getVsync();
+  }
 }
 
-void Sample::close()
+void Sample::end()
 {
   vkDeviceWaitIdle(m_context);
-
-  NVPWindow::close();
   m_profilerVK.deinit();
 
   ImGui::ShutdownVK();
@@ -449,9 +364,8 @@ void Sample::close()
   destroyFramebuffers();
   destroyRenderPasses();
   destroyDescriptorSets();
-  destroyImages();
+  destroyFrameImages();
   destroyScene();
-  // From resizeCommands
   destroyUniformBuffers();
   // From begin
   m_allocatorDma.deinit();
@@ -481,8 +395,7 @@ void Sample::createTextureSampler()
   samplerInfo.compareEnable           = VK_FALSE;
   samplerInfo.mipmapMode              = VK_SAMPLER_MIPMAP_MODE_NEAREST;
 
-  VkResult result = vkCreateSampler(m_context, &samplerInfo, nullptr, &m_pointSampler);
-  assert(result == VK_SUCCESS);
+  NVVK_CHECK(vkCreateSampler(m_context, &samplerInfo, nullptr, &m_pointSampler));
 }
 
 void Sample::destroyUniformBuffers()
@@ -593,21 +506,15 @@ void Sample::initScene(VkCommandBuffer commandBuffer)
 
 void Sample::destroyFramebuffers()
 {
-  if(m_mainColorDepthFramebuffer != nullptr)
-  {
-    vkDestroyFramebuffer(m_context, m_mainColorDepthFramebuffer, nullptr);
-    m_mainColorDepthFramebuffer = nullptr;
-  }
+  vkDestroyFramebuffer(m_context, m_mainColorDepthFramebuffer, nullptr);
+  m_mainColorDepthFramebuffer = nullptr;
 
-  if(m_weightedFramebuffer != nullptr)
-  {
-    vkDestroyFramebuffer(m_context, m_weightedFramebuffer, nullptr);
-    m_weightedFramebuffer = nullptr;
-  }
-
-  for(VkFramebuffer framebuffer : m_guiSwapChainFramebuffers)
-  {
-    vkDestroyFramebuffer(m_context, framebuffer, nullptr);
+  vkDestroyFramebuffer(m_context, m_guiFramebuffer, nullptr);
+  m_guiFramebuffer = nullptr;
+  
+  if (m_weightedFramebuffer != nullptr) {
+      vkDestroyFramebuffer(m_context, m_weightedFramebuffer, nullptr);
+      m_weightedFramebuffer = nullptr;
   }
 }
 
@@ -615,24 +522,18 @@ void Sample::createFramebuffers()
 {
   destroyFramebuffers();
 
-  const uint32_t numSwapChainImages = m_swapChain.getImageCount();
-
   // Color + depth offscreen framebuffer
   {
     std::array<VkImageView, 2> attachments = {m_colorImage.view, m_depthImage.view};
+    VkFramebufferCreateInfo    fbInfo      = nvvk::make<VkFramebufferCreateInfo>();
+    fbInfo.renderPass                      = m_renderPassColorDepthClear;
+    fbInfo.attachmentCount                 = static_cast<uint32_t>(attachments.size());
+    fbInfo.pAttachments                    = attachments.data();
+    fbInfo.width                           = m_colorImage.c_width;
+    fbInfo.height                          = m_colorImage.c_height;
+    fbInfo.layers                          = 1;
 
-    VkFramebufferCreateInfo framebufferInfo = nvvk::make<VkFramebufferCreateInfo>();
-    framebufferInfo.renderPass              = m_renderPassColorDepthClear;
-    framebufferInfo.attachmentCount         = static_cast<uint32_t>(attachments.size());
-    framebufferInfo.pAttachments            = attachments.data();
-    framebufferInfo.width                   = m_colorImage.c_width;
-    framebufferInfo.height                  = m_colorImage.c_height;
-    framebufferInfo.layers                  = 1;
-
-    if(vkCreateFramebuffer(m_context, &framebufferInfo, nullptr, &m_mainColorDepthFramebuffer) != VK_SUCCESS)
-    {
-      throw std::runtime_error("Failed to create main color+depth framebuffer!");
-    }
+    NVVK_CHECK(vkCreateFramebuffer(m_context, &fbInfo, NULL, &m_mainColorDepthFramebuffer));
 
     m_debug.setObjectName(m_mainColorDepthFramebuffer, "m_mainColorDepthFramebuffer");
   }
@@ -654,36 +555,42 @@ void Sample::createFramebuffers()
     framebufferInfo.height                  = m_oitWeightedColorImage.c_height;
     framebufferInfo.layers                  = 1;
 
-    if(vkCreateFramebuffer(m_context, &framebufferInfo, nullptr, &m_weightedFramebuffer) != VK_SUCCESS)
-    {
-      throw std::runtime_error("Failed to create the Weighted, Blended OIT framebuffer!");
-    }
+    NVVK_CHECK(vkCreateFramebuffer(m_context, &framebufferInfo, nullptr, &m_weightedFramebuffer));
 
     m_debug.setObjectName(m_weightedFramebuffer, "m_weightedColorRevealFramebuffer");
   }
 
-  // GUI swapchain framebuffers
-  m_guiSwapChainFramebuffers.resize(numSwapChainImages);
-
-  for(uint32_t i = 0; i < numSwapChainImages; i++)
+  // ui related
   {
-    VkImageView swapChainColorView = m_swapChain.getImageView(i);
+    VkImageView uiTarget = m_guiCompositeImage.view;
 
-    VkFramebufferCreateInfo framebufferInfo = nvvk::make<VkFramebufferCreateInfo>();
-    framebufferInfo.renderPass              = m_renderPassGUI;
-    framebufferInfo.attachmentCount         = 1;
-    framebufferInfo.pAttachments            = &swapChainColorView;
-    framebufferInfo.width                   = m_swapChain.getWidth();
-    framebufferInfo.height                  = m_swapChain.getHeight();
-    framebufferInfo.layers                  = 1;
+    // Create framebuffers
+    VkImageView bindInfos[1];
+    bindInfos[0] = uiTarget;
 
-    if(vkCreateFramebuffer(m_context, &framebufferInfo, nullptr, &m_guiSwapChainFramebuffers[i]) != VK_SUCCESS)
-    {
-      throw std::runtime_error("Failed to create GUI framebuffer!");
-    }
+    VkFramebufferCreateInfo fbInfo = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    fbInfo.attachmentCount         = NV_ARRAY_SIZE(bindInfos);
+    fbInfo.pAttachments            = bindInfos;
+    fbInfo.width                   = m_windowState.m_swapSize[0];
+    fbInfo.height                  = m_windowState.m_swapSize[1];
+    fbInfo.layers                  = 1;
 
-    m_debug.setObjectName(m_guiSwapChainFramebuffers[i], "m_guiSwapChainFramebuffers[...]");
+    fbInfo.renderPass = m_renderPassGUI;
+    NVVK_CHECK(vkCreateFramebuffer(m_context, &fbInfo, NULL, &m_guiFramebuffer));
   }
+}
+
+void Sample::setUpViewportsAndScissors()
+{
+  m_scissorGUI              = {0}; // Zero-initialize
+  m_scissorGUI.extent.width = m_windowState.m_swapSize[0];
+  m_scissorGUI.extent.height = m_windowState.m_swapSize[1];
+
+  m_viewportGUI = {0}; // Zero-initialize
+  m_viewportGUI.width = static_cast<float>(m_scissorGUI.extent.width);
+  m_viewportGUI.height = static_cast<float>(m_scissorGUI.extent.height);
+  m_viewportGUI.minDepth = 0.0f;
+  m_viewportGUI.maxDepth = 1.0f;
 }
 
 void Sample::createOrReloadShaderModule(nvvk::ShaderModuleID& shaderModule,
@@ -882,6 +789,15 @@ VkPipeline Sample::createGraphicsPipeline(const nvvk::ShaderModuleID& vertShader
   return pipeline;
 }
 
+VkCommandBuffer Sample::createTempCmdBuffer()
+{
+  VkCommandBuffer          cmd       = m_ringCmdPool.createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
+  VkCommandBufferBeginInfo beginInfo = nvvk::make<VkCommandBufferBeginInfo>();
+  beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  NVVK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
+  return cmd;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Main rendering logic                                                      //
 ///////////////////////////////////////////////////////////////////////////////
@@ -905,331 +821,293 @@ void Sample::updateUniformBuffer(uint32_t currentImage, double time)
   m_allocatorDma.unmap(m_uniformBuffers[currentImage]);
 }
 
-void Sample::copyOffscreenToBackBuffer(VkCommandBuffer cmdBuffer)
+void Sample::copyOffscreenToBackBuffer(int winWidth, int winHeight, ImDrawData* imguiDrawData)
 {
-  const nvvk::ProfilerVK::Section scopedTimer(m_profilerVK, "CopyOffscreenToBackBuffer", cmdBuffer);
+  // This function resolves + scales m_colorImage into m_guiCompositeImage, draws the Dear ImGui GUI onto
+  // m_guiCompositeImage, and then blits m_guiCompositeImage onto the backbuffer. Because m_colorImage is
+  // generally a different format (B8G8R8A8_SRGB) than m_guiCompositeImage (R8G8B8A8) (which in turn is required by
+  // linear-space rendering) and sometimes a different size xor has different MSAA samples/pixel, the worst case
+  // (MSAA resolve + change of format) takes two steps.
+  // Note that we could do this in one step, and further customize the filters used, using a custom kernel.
+  // Finally, Vulkan allows us to access the swapchain images themselves. However, while a previous version of this
+  // sample did that, we now render the GUI to intermediate offscreen image, as this avoids potential problems with
+  // swapchain recreation, and may be more familiar to developers used to OpenGL applications.
+  //
+  // As a result of the differences between MSAA resolve + downscaling, there are a few cases to handle.
+  // Here's a high-level node graph overview of this function:
+  //
+  //       MSAA?          Downsample?    Neither?
+  //    m_colorImage     m_colorImage  m_colorImage
+  //         |               |              |
+  // vkCmdResolveImage  vkCmdBlitImage      |
+  //         V               V              |
+  //         m_downsampleImage  .-----------*
+  //                 |          V
+  //                vkCmdCopyImage (reinterpret data)
+  //                 V
+  //        m_guiCompositeImage
+  //                 |
+  //       render Dear ImGui GUI
+  //                 V
+  //             Swapchain
 
-  // Outline:
-  // Transition color
-  // set copySrcTexture to color
-  // MSAA or SSAA:
-  //   transition intermediate
-  //   set copySrcTexture to intermediate
-  //   MSAA:
-  //     resolve color to intermediate
-  //   SSAA:
-  //     blit color to intermediate
-  //   transition intermediate
-  // copy copySrcTexture to backbuffer
+  // Start a separate command buffer for this function.
+  VkCommandBuffer          cmdBuffer = createTempCmdBuffer();
+  nvh::Profiler::SectionID sec       = m_profilerVK.beginSection("CopyOffscreenToBackBuffer", cmdBuffer);
 
-  // Transition the color attachment to a state that we can read from.
-  const VkImageLayout        originalLayout   = m_colorImage.currentLayout;
-  const VkPipelineStageFlags originalStages   = m_colorImage.currentStages;
-  const VkAccessFlags        originalAccesses = m_colorImage.currentAccesses;
-  m_colorImage.transitionTo(cmdBuffer,                             //
-                            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,  //
-                            VK_PIPELINE_STAGE_TRANSFER_BIT,        //
-                            VK_ACCESS_TRANSFER_READ_BIT);
+  // Prepare to transfer from m_colorImage; check its initial state for soundness
+  assert(m_colorImage.currentLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  assert(m_colorImage.currentAccesses == (VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT));
+  m_colorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT);
 
+  // Tracks the image that will be passed to vkCmdCopyImage
+  // These are the defaults if no resolve or downsample is required.
   VkImage       copySrcImage  = m_colorImage.image.image;
   VkImageLayout copySrcLayout = m_colorImage.currentLayout;
 
+  // If resolve or downsample required
   if(m_state.msaa != 1 || m_state.supersample != 1)
   {
-    m_downsampleTargetImage.transitionTo(cmdBuffer,                             //
-                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  //
-                                         VK_PIPELINE_STAGE_TRANSFER_BIT,        //
-                                         VK_ACCESS_TRANSFER_WRITE_BIT);
+    // Prepare to transfer data to m_downsampleImage
+    m_downsampleImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT);
 
+    // MSAA branch
     if(m_state.msaa != 1)
     {
-      // Resolve the MSAA image m_colorImage to m_downsampleTargetImage
-      // Note: These have to be the same size - so it looks like we can't
-      // resolve MSAA and downsample in the same step. Instead, we would
-      // have to resolve MSAA, then downsample, or use a different approach
-      // (e.g. a compute shader).
-      VkImageResolve region;
-      region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-      region.srcSubresource.baseArrayLayer = 0;
-      region.srcSubresource.layerCount     = 1;  // Image is not an array
-      region.srcSubresource.mipLevel       = 0;
-      region.srcOffset                     = {0, 0, 0};
-      region.dstSubresource                = region.srcSubresource;
-      region.dstOffset                     = {0, 0, 0};
-      region.extent                        = {m_colorImage.c_width, m_colorImage.c_height, 1};
+      // Resolve the MSAA image m_colorImage to m_downsampleImage
+      VkImageResolve region            = {0};  // Zero-initialize
+      region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      region.srcSubresource.layerCount = 1;
+      region.dstSubresource            = region.srcSubresource;
+      region.extent                    = {m_colorImage.c_width, m_colorImage.c_height, 1};
 
-      vkCmdResolveImage(cmdBuffer,                              // Command buffer
-                        m_colorImage.image.image,               // Source image
-                        m_colorImage.currentLayout,             // Source image layout
-                        m_downsampleTargetImage.image.image,    // Destination image
-                        m_downsampleTargetImage.currentLayout,  // Destination image layout
-                        1,                                      // Number of regions
-                        &region);                               // Regions
+      vkCmdResolveImage(cmdBuffer,                        // Command buffer
+                        m_colorImage.image.image,         // Source image
+                        m_colorImage.currentLayout,       // Source image layout
+                        m_downsampleImage.image.image,    // Destination image
+                        m_downsampleImage.currentLayout,  // Destination image layout
+                        1,                                // Number of regions
+                        &region);                         // Regions
     }
     else
     {
       // Downsample m_colorImage to m_downsampleTargeImage
-
-      VkImageBlit region;
-      region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-      region.srcSubresource.baseArrayLayer = 0;
-      region.srcSubresource.layerCount     = 1;  // Image is not an array
-      region.srcSubresource.mipLevel       = 0;
-      region.srcOffsets[0]                 = {0, 0, 0};
-      region.srcOffsets[1]                 = {static_cast<int32_t>(m_colorImage.c_width),   //
+      VkImageBlit region               = {0};  // Zero-initialize
+      region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      region.srcSubresource.layerCount = 1;
+      region.dstSubresource            = region.srcSubresource;
+      region.srcOffsets[1]             = {static_cast<int32_t>(m_colorImage.c_width),   //
                               static_cast<int32_t>(m_colorImage.c_height),  //
                               1};
-      region.dstSubresource                = region.srcSubresource;
-      region.dstOffsets[0]                 = {0, 0, 0};
-      region.dstOffsets[1]                 = {static_cast<int32_t>(m_downsampleTargetImage.c_width),   //
-                              static_cast<int32_t>(m_downsampleTargetImage.c_height),  //
+      region.dstOffsets[1]             = {static_cast<int32_t>(m_downsampleImage.c_width),   //
+                              static_cast<int32_t>(m_downsampleImage.c_height),  //
                               1};
 
-      vkCmdBlitImage(cmdBuffer,                              // Command buffer
-                     m_colorImage.image.image,               // Source image
-                     m_colorImage.currentLayout,             // Source image
-                     m_downsampleTargetImage.image.image,    // Destination image
-                     m_downsampleTargetImage.currentLayout,  // Destination image layout
-                     1,                                      // Number of regions
-                     &region,                                // Regions
-                     VK_FILTER_LINEAR);                      // Use tent filtering (= box filtering in this case)
+      vkCmdBlitImage(cmdBuffer,                        // Command buffer
+                     m_colorImage.image.image,         // Source image
+                     m_colorImage.currentLayout,       // Source image
+                     m_downsampleImage.image.image,    // Destination image
+                     m_downsampleImage.currentLayout,  // Destination image layout
+                     1,                                // Number of regions
+                     &region,                          // Regions
+                     VK_FILTER_LINEAR);                // Use tent filtering (= box filtering in this case)
     }
 
-    m_downsampleTargetImage.transitionTo(cmdBuffer,                             //
-                                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,  //
-                                         VK_PIPELINE_STAGE_TRANSFER_BIT,        //
-                                         VK_ACCESS_TRANSFER_READ_BIT);
-
-    copySrcImage  = m_downsampleTargetImage.image.image;
-    copySrcLayout = m_downsampleTargetImage.currentLayout;
+    // Prepare to transfer data from m_downsampleImage, and set copySrcImage and copySrcLayout.
+    m_downsampleImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT);
+    copySrcImage  = m_downsampleImage.image.image;
+    copySrcLayout = m_downsampleImage.currentLayout;
   }
 
-  // Transition the backbuffer to a state that we can write to
-  // The (VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0)
-  // triplet comes from how the images were created in swapchain_vk.cpp.
-  doTransition(cmdBuffer,                             //
-               m_swapChain.getActiveImage(),          //
-               VK_IMAGE_ASPECT_COLOR_BIT,             //
-               VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,       //
-               VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,     //
-               0,                                     //
-               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  //
-               VK_PIPELINE_STAGE_TRANSFER_BIT,        //
-               VK_ACCESS_TRANSFER_WRITE_BIT,          //
-               1);                                    // Image is not an array
+  // Prepare to transfer data to m_guiCompositeImage
+  m_guiCompositeImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT);
 
-  // Copy the internal data of copySrcTexture to the backbuffer
+  // Now, we want to copy data from copySrcImage to m_guiCompositeImage instead of blitting it, since blitting will try
+  // to convert the sRGB data and store it in linear format, which isn't what we want.
   {
-    VkImageCopy region;
-    region.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.srcSubresource.baseArrayLayer = 0;
-    region.srcSubresource.layerCount     = 1;
-    region.srcSubresource.mipLevel       = 0;
-    region.srcOffset                     = {0, 0, 0};
-    region.dstSubresource                = region.srcSubresource;
-    region.dstOffset                     = {0, 0, 0};
-    region.extent                        = {m_swapChain.getWidth(), m_swapChain.getHeight(), 1};
+    VkImageCopy region               = {0};
+    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.srcSubresource.layerCount = 1;
+    region.dstSubresource            = region.srcSubresource;
+    region.extent                    = {m_guiCompositeImage.c_width, m_guiCompositeImage.c_height, 1};
+    vkCmdCopyImage(cmdBuffer,                          // Command buffer
+                   copySrcImage,                       // Source image
+                   copySrcLayout,                      // Source image layout
+                   m_guiCompositeImage.image.image,    // Destination image
+                   m_guiCompositeImage.currentLayout,  // Destination image layout
+                   1,                                  // Number of regions
+                   &region);                           // Regions
+  }
 
-    // We want to copy the data instead of blitting it, since blitting
-    // will try to convert the sRGB data in m_colorImage and store it in
-    // linear format.
-    vkCmdCopyImage(cmdBuffer,                             // Command buffer
-                   copySrcImage,                          // Source image
-                   copySrcLayout,                         // Source image layout
+  // Now, render the GUI.
+  // If draw data exists, we begin a new render pass and call ImGui::RenderDrawDataVK.
+  // This render pass takes m_guiCompositeImage and transitions it to layout TRANSFER_SRC_OPTIMAL, so if we don't call
+  // that render pass, we have to do the transition manually.
+
+  if(imguiDrawData)
+  {
+    VkRenderPassBeginInfo renderPassBeginInfo    = nvvk::make<VkRenderPassBeginInfo>();
+    renderPassBeginInfo.renderPass               = m_renderPassGUI;
+    renderPassBeginInfo.framebuffer              = m_guiFramebuffer;
+    renderPassBeginInfo.renderArea.offset.x      = 0;
+    renderPassBeginInfo.renderArea.offset.y      = 0;
+    renderPassBeginInfo.renderArea.extent.width  = winWidth;
+    renderPassBeginInfo.renderArea.extent.height = winHeight;
+    renderPassBeginInfo.clearValueCount          = 0;
+    renderPassBeginInfo.pClearValues             = nullptr;
+
+    vkCmdBeginRenderPass(cmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    vkCmdSetViewport(cmdBuffer, 0, 1, &m_viewportGUI);
+    vkCmdSetScissor(cmdBuffer, 0, 1, &m_scissorGUI);
+
+    ImGui::RenderDrawDataVK(cmdBuffer, imguiDrawData);
+
+    vkCmdEndRenderPass(cmdBuffer);
+
+    // Since the render pass changed the layout and accesses, we have to tell the ImageAndView abstraction that
+    // these changed:
+    m_guiCompositeImage.currentLayout   = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    m_guiCompositeImage.currentAccesses = VK_ACCESS_TRANSFER_READ_BIT;
+  }
+  else
+  {
+    m_guiCompositeImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT);
+  }
+
+  // Finally, blit to the swapchain.
+  {
+    // Soundness check
+    assert(m_guiCompositeImage.c_width == winWidth);
+    assert(m_guiCompositeImage.c_height == winHeight);
+    VkImageBlit region               = {0};
+    region.dstOffsets[1].x           = winWidth;
+    region.dstOffsets[1].y           = winHeight;
+    region.dstOffsets[1].z           = 1;
+    region.srcOffsets[1].x           = winWidth;
+    region.srcOffsets[1].y           = winHeight;
+    region.srcOffsets[1].z           = 1;
+    region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.dstSubresource.layerCount = 1;
+    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.srcSubresource.layerCount = 1;
+
+    cmdImageTransition(cmdBuffer, m_swapChain.getActiveImage(), VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+                       VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    vkCmdBlitImage(cmdBuffer,                             // Command buffer
+                   m_guiCompositeImage.image.image,       // Source image
+                   m_guiCompositeImage.currentLayout,     // Source image layout
                    m_swapChain.getActiveImage(),          // Destination image
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  // Destination image layout
                    1,                                     // Number of regions
-                   &region);                              // Regions
+                   &region,                               // Region
+                   VK_FILTER_NEAREST);                    // Filter
+
+    cmdImageTransition(cmdBuffer, m_swapChain.getActiveImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                       0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
   }
 
-  // Transition the backbuffer to prepare to write to it
-  doTransition(cmdBuffer,                                                                   //
-               m_swapChain.getActiveImage(),                                                //
-               VK_IMAGE_ASPECT_COLOR_BIT,                                                   //
-               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,                                        //
-               VK_PIPELINE_STAGE_TRANSFER_BIT,                                              //
-               VK_ACCESS_TRANSFER_WRITE_BIT,                                                //
-               VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,                                    //
-               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,                               //
-               VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,  //
-               1);                                                                          // Image is not an array
+  // Reset the layout of m_colorImage.
+  m_colorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 
-  // Transition the color layout back
-  m_colorImage.transitionTo(cmdBuffer,       //
-                            originalLayout,  //
-                            originalStages,  //
-                            originalAccesses);
+  m_profilerVK.endSection(sec, cmdBuffer);
+
+  vkEndCommandBuffer(cmdBuffer);
+  m_submission.enqueue(cmdBuffer);
 }
 
-void Sample::display()
+void Sample::submissionExecute(VkFence fence, bool useImageReadWait, bool useImageWriteSignals)
 {
-  if(getWidth() == 0 || getHeight() == 0)
+  if(useImageReadWait && m_submissionWaitForRead)
   {
-    // Don't do anything while the window is minimized
-    return;
+    VkSemaphore semRead = m_swapChain.getActiveReadSemaphore();
+    if(semRead)
+    {
+      m_submission.enqueueWait(semRead, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    }
+    m_submissionWaitForRead = false;
   }
 
-  // Start the profiler print loop
+  if(useImageWriteSignals)
+  {
+    VkSemaphore semWritten = m_swapChain.getActiveWrittenSemaphore();
+    if(semWritten)
+    {
+      m_submission.enqueueSignal(semWritten);
+    }
+  }
+
+  m_submission.execute(fence);
+}
+
+void Sample::think(double time)
+{
+  int    width          = m_windowState.m_swapSize[0];
+  int    height         = m_windowState.m_swapSize[1];
   double frameStartTime = getTime();
-  if(m_lastProfilerPrintTime == 0.0)
+
+  // Create Dear ImGui interface
+  DoGUI(width, height, time);
+
+  // If elements of m_state change, this reinitializes parts of the renderer.
+  updateRendererImmediate(false, false);
+
+  // Begin frame
   {
-    m_lastProfilerPrintTime = frameStartTime;
+    m_submissionWaitForRead = true;
+    m_ringFences.setCycleAndWait(m_frame);
+    m_ringCmdPool.setCycle(m_ringFences.getCycleIndex());
   }
-  m_timeCounter.update(true);
 
-  // Get the next swapchain image and begin the frame
-  m_swapChain.acquire();
-  m_profilerVK.beginFrame();
-
-  // m_ringFences is a ring buffer of fences (which prevent the CPU from
-  // advancing until the GPU completes an operation, and m_ringCmdPool is a
-  // ring buffer of command pools.
-  // The idea is that we'd like to be able to record the instructions to draw
-  // a frame while the GPU is drawing another frame. But we don't want to
-  // overwrite resources that the GPU is currently using. So, m_ringCmdPool
-  // gives us a different pool of command buffers per frame (of which we only
-  // use one), and m_ringFences contains an array of fences that prevent us
-  // from overwriting the command buffer for a frame until the GPU has
-  // finished processing it.
-  // There's also synchronization using semaphores between the graphics,
-  // compute, and transfer queue, and the present queue, to prevent the GCT
-  // queue from overwriting a swapchain image that the present queue is using.
-  m_ringFences.setCycleAndWait(m_swapChain.getActiveImageIndex());
-  m_ringCmdPool.setCycle(m_ringFences.getCycleIndex());
+  // Update camera
+  m_cameraControl.processActions(nvmath::vec2i(getWidth(), getHeight()),
+                                 nvmath::vec2f(m_windowState.m_mouseCurrent[0], m_windowState.m_mouseCurrent[1]),
+                                 m_windowState.m_mouseButtonFlags, m_windowState.m_mouseWheel);
 
   // Update the GPU's uniform buffer
   updateUniformBuffer(m_swapChain.getActiveImageIndex(), frameStartTime);
 
-  // Update Dear ImGui configuration
-  {
-    auto& imguiIO       = ImGui::GetIO();
-    imguiIO.DeltaTime   = static_cast<float>(m_timeCounter.getFrameDT());
-    imguiIO.DisplaySize = ImVec2(static_cast<float>(m_swapChain.getWidth()), static_cast<float>(m_swapChain.getHeight()));
-  }
-
-  // Create Dear ImGui interface
-  ImGui::NewFrame();
-  DoGUI();
-
-  // Update camera
-  m_cameraControl.processActions(nvmath::vec2i(getWidth(), getHeight()), m_controllerState.mouseCurrent,
-                                 m_controllerState.mouseButtonFlags, m_controllerState.mouseWheel);
-
   // Record this frame's command buffer
-  // This line creates and begins a primary command buffer:
   VkCommandBuffer cmdBuffer = m_ringCmdPool.createCommandBuffer();
   {
     render(cmdBuffer);
-
-    copyOffscreenToBackBuffer(cmdBuffer);
-
-    // Render Dear ImGui
-    {
-      const nvvk::ProfilerVK::Section scopedTimer(m_profilerVK, "GUI", cmdBuffer);
-
-      // Set up the render pass
-      VkRenderPassBeginInfo renderPassInfo    = nvvk::make<VkRenderPassBeginInfo>();
-      renderPassInfo.renderPass               = m_renderPassGUI;
-      renderPassInfo.framebuffer              = m_guiSwapChainFramebuffers[m_swapChain.getActiveImageIndex()];
-      renderPassInfo.renderArea.offset        = {0, 0};
-      renderPassInfo.renderArea.extent.width  = m_swapChain.getWidth();
-      renderPassInfo.renderArea.extent.height = m_swapChain.getHeight();
-
-      vkCmdBeginRenderPass(cmdBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-      if(m_state.drawUI)
-      {
-        ImGui::Render();
-        ImGui::RenderDrawDataVK(cmdBuffer, ImGui::GetDrawData());
-      }
-      ImGui::EndFrame();
-
-      vkCmdEndRenderPass(cmdBuffer);
-    }
-
-    if(vkEndCommandBuffer(cmdBuffer) != VK_SUCCESS)
-    {
-      assert(!"Failed to record command buffer!");
-    }
+    NVVK_CHECK(vkEndCommandBuffer(cmdBuffer));
+    m_submission.enqueue(cmdBuffer);
   }
 
-  m_submission.enqueueWait(m_swapChain.getActiveReadSemaphore(), VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-
-  m_submission.enqueueSignal(m_swapChain.getActiveWrittenSemaphore());
-
-  m_submission.enqueue(cmdBuffer);
-
-  if(m_submission.execute(m_ringFences.getFence()) != VK_SUCCESS)
+  // Render Dear ImGui and translate the internal image to the swapchain
   {
-    throw std::runtime_error("Failed to submit draw command buffer!");
+    ImGui::Render();
+    copyOffscreenToBackBuffer(width, height, ImGui::GetDrawData());
   }
 
-  m_profilerVK.endFrame();
-  // Update profiling information
-  m_framesSinceLastProfilerPrint++;
-  if(frameStartTime > m_lastProfilerPrintTime + 1.0f)
+  // End frame
   {
-    std::stringstream combinedTitle;
-
-    combinedTitle << PROJECT_NAME << ": " <<  //
-        m_timeCounter.getFrameDT() * 1000.0 << " [ms]";
-    if(m_vsync)
-    {
-      combinedTitle << " (vsync on - V for toggle)";
-    }
-    setTitle(combinedTitle.str().c_str());
-
-    std::string stats;
-    m_profilerVK.print(stats);
-    if(!stats.empty())
-    {
-      LOGI("%s\n", stats.c_str());
-    }
-
-    m_lastProfilerPrintTime        = frameStartTime;
-    m_framesSinceLastProfilerPrint = 0;
+    submissionExecute(m_ringFences.getFence(), true, true);
+    m_frame++;
+    ImGui::EndFrame();
+    m_lastState = m_state;
   }
-
-  // Present the frame!
-  m_swapChain.present();
 }
 
 int main(int argc, const char** argv)
 {
-  // NVPSystem initializes GLFW and sets its error callback:
-  NVPSystem sys(argv[0], PROJECT_NAME);
-  // Create a single window
-  static Sample sample;
+  NVPSystem system(argv[0], PROJECT_NAME);
 
-  // Create the Vulkan context
-#ifdef _DEBUG
-  const bool bUseValidation = true;
-#else   // #ifdef _DEBUG
-  const bool bUseValidation = false;
-#endif  // #ifdef _DEBUG
-  nvvk::ContextCreateInfo deviceInfo(bUseValidation);
-  deviceInfo.apiMajor = 1;
-  deviceInfo.apiMinor = 1;
-  deviceInfo.addInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME, false);
-#ifdef _WIN32
-  deviceInfo.addInstanceExtension(VK_KHR_WIN32_SURFACE_EXTENSION_NAME, false);
-#else
-  deviceInfo.addInstanceExtension(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
-  deviceInfo.addInstanceExtension(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
-#endif
-  deviceInfo.addDeviceExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
-  deviceInfo.addDeviceExtension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, false);
-  deviceInfo.addDeviceExtension(VK_KHR_MAINTENANCE3_EXTENSION_NAME, false);
-  deviceInfo.addDeviceExtension(VK_KHR_SWAPCHAIN_EXTENSION_NAME, false);
-
-  VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR physicalDevicePipelineExecutablePropertiesFeaturesKHR = {
+  Sample sample;
+  sample.m_contextInfo.addDeviceExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
+  sample.m_contextInfo.addDeviceExtension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+  sample.m_contextInfo.addDeviceExtension(VK_KHR_MAINTENANCE3_EXTENSION_NAME);
+  VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR physicalDevicePipelineExecutableProprtiesFeaturesKHR = {
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR, nullptr, VK_TRUE};
-  deviceInfo.addDeviceExtension(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME, true,
-                                &physicalDevicePipelineExecutablePropertiesFeaturesKHR);
+  sample.m_contextInfo.addDeviceExtension(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME, true,
+                                          &physicalDevicePipelineExecutableProprtiesFeaturesKHR);
 
   // These extensions are both optional - there are algorithms we can use if we have them, but
   // if the device doesn't support these extensions, we don't allow the user to select those algorithms.
-  deviceInfo.addDeviceExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, true);
+  sample.m_contextInfo.addDeviceExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, true);
   // VK_EXT_FRAGMENT_SHADER_INTERLOCK uses an extension which will be passed to device creation via
   // VkDeviceCreateInfo's pNext chain:
   VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT m_fragmentShaderInterlockFeatures{
@@ -1238,31 +1116,9 @@ int main(int argc, const char** argv)
       VK_TRUE,                                                                   // fragmentShaderSampleInterlock
       VK_TRUE,                                                                   // fragmentShaderPixelInterlock
       VK_FALSE};
-  deviceInfo.addDeviceExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, true, &m_fragmentShaderInterlockFeatures);
+  sample.m_contextInfo.addDeviceExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, true, &m_fragmentShaderInterlockFeatures);
 
-  if(!sample.m_context.init(deviceInfo))
-  {
-    LOGE("Failed to initialize the Vulkan context!\n");
-    return EXIT_FAILURE;
-  }
-
-  // Create the window
   const int SAMPLE_WIDTH  = 1200;
   const int SAMPLE_HEIGHT = 1024;
-  if(!sample.init(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT, PROJECT_NAME))
-  {
-    LOGE("Failed to initialize the sample!\n");
-    return EXIT_FAILURE;
-  }
-
-  // Message pump loop
-  while(sample.pollEvents())
-  {
-    sample.display();
-  }
-
-  // Terminate
-  sample.close();
-
-  return EXIT_SUCCESS;
+  return sample.run(PROJECT_NAME, argc, argv, SAMPLE_WIDTH, SAMPLE_HEIGHT);
 }
