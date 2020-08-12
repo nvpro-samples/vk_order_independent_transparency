@@ -142,29 +142,6 @@ struct BufferAndView
       util.setObjectName(view, name);
     }
   }
-
-  // Attempts to ensure that all memory read/write operations involving the
-  // given buffer have completed by creating a VkCmdPipelineBarrier with
-  // a VkBufferMemoryBarrier that doesn't change anything.
-  // VkBufferMemoryBarriers can target specific parts of buffers, but here we
-  // depend upon the entire buffer.
-  void memoryBarrier(VkCommandBuffer      cmdBuffer,
-                     VkPipelineStageFlags stagesDependedUpon,
-                     VkPipelineStageFlags stagesThatDepend,
-                     VkAccessFlags        accessesDependedUpon,
-                     VkAccessFlags        accessesThatDepend)
-  {
-    VkBufferMemoryBarrier barrier = nvvk::make<VkBufferMemoryBarrier>();
-    barrier.srcAccessMask         = stagesDependedUpon;
-    barrier.dstAccessMask         = stagesThatDepend;
-    barrier.srcQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex   = VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer                = buffer.buffer;
-    barrier.offset                = 0;
-    barrier.size                  = size;
-
-    vkCmdPipelineBarrier(cmdBuffer, stagesDependedUpon, stagesThatDepend, 0, 0, nullptr, 1, &barrier, 0, nullptr);
-  }
 };
 
 // Creates a simple texture with 1 mip, 1 array layer, 1 sample per texel, with
@@ -217,25 +194,9 @@ inline void cmdImageTransition(VkCommandBuffer    cmd,
 
   VkPipelineStageFlags srcPipe = nvvk::makeAccessMaskPipelineStageFlags(src);
   VkPipelineStageFlags dstPipe = nvvk::makeAccessMaskPipelineStageFlags(dst);
+  VkImageMemoryBarrier barrier = nvvk::makeImageMemoryBarrier(img, src, dst, oldLayout, newLayout, aspects);
 
-  VkImageSubresourceRange range;
-  memset(&range, 0, sizeof(range));
-  range.aspectMask     = aspects;
-  range.baseMipLevel   = 0;
-  range.levelCount     = VK_REMAINING_MIP_LEVELS;
-  range.baseArrayLayer = 0;
-  range.layerCount     = VK_REMAINING_ARRAY_LAYERS;
-
-  VkImageMemoryBarrier memBarrier = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-  memBarrier.sType                = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  memBarrier.dstAccessMask        = dst;
-  memBarrier.srcAccessMask        = src;
-  memBarrier.oldLayout            = oldLayout;
-  memBarrier.newLayout            = newLayout;
-  memBarrier.image                = img;
-  memBarrier.subresourceRange     = range;
-
-  vkCmdPipelineBarrier(cmd, srcPipe, dstPipe, VK_FALSE, 0, NULL, 0, NULL, 1, &memBarrier);
+  vkCmdPipelineBarrier(cmd, srcPipe, dstPipe, VK_FALSE, 0, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, 1, &barrier);
 }
 
 // An ImageAndView is an NVVK image (i.e. Vulkan image and underlying memory),
@@ -253,8 +214,8 @@ struct ImageAndView
 
   // Information for pipeline transitions. These should generally only be
   // modified via transitionTo or when ending render passes.
-  VkImageLayout        currentLayout = VK_IMAGE_LAYOUT_UNDEFINED;  // The current layout of the image in GPU memory (e.g. GENERAL or COLOR_ATTACHMENT_OPTIMAL)
-  VkAccessFlags        currentAccesses = 0;  // How the memory of this texture can be accessed (e.g. shader read/write, color attachment read/write)
+  VkImageLayout currentLayout = VK_IMAGE_LAYOUT_UNDEFINED;  // The current layout of the image in GPU memory (e.g. GENERAL or COLOR_ATTACHMENT_OPTIMAL)
+  VkAccessFlags currentAccesses = 0;  // How the memory of this texture can be accessed (e.g. shader read/write, color attachment read/write)
 
 public:
   // Creates a simple texture and view with 1 mip and 1 array layer.
@@ -297,9 +258,9 @@ public:
     }
   }
 
-  void transitionTo(VkCommandBuffer      cmdBuffer,
-                    VkImageLayout        dstLayout,  // How the image will be laid out in memory.
-                    VkAccessFlags        dstAccesses)       // The ways that the app will be able to access the image.
+  void transitionTo(VkCommandBuffer cmdBuffer,
+                    VkImageLayout   dstLayout,  // How the image will be laid out in memory.
+                    VkAccessFlags   dstAccesses)  // The ways that the app will be able to access the image.
   {
     // Note that in larger applications, we could batch together pipeline
     // barriers for better performance!
@@ -336,3 +297,46 @@ public:
     util.setObjectName(view, name);
   }
 };
+
+// Adds a simple command that ensures that all transfer writes have finished before all
+// subsequent fragment shader reads and writes (in the current scope).
+// Note that on NV hardware, unless you need a layout transition, there's little benefit to using
+// memory barriers for each of the individual objects (and in fact may run into issues with the
+// Vulkan specification).
+// The dependency flags are BY_REGION_BIT by default, since most calls to cmdBarrier come from
+// dependencies inside render passes, which require this (according to section 6.6.1).
+inline void cmdTransferBarrierSimple(VkCommandBuffer cmdBuffer)
+{
+  const VkPipelineStageFlags srcStageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  const VkPipelineStageFlags dstStageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+  VkMemoryBarrier barrier = nvvk::make<VkMemoryBarrier>();
+  barrier.srcAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT;
+  barrier.dstAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+  vkCmdPipelineBarrier(cmdBuffer, srcStageFlags, dstStageFlags, VK_DEPENDENCY_BY_REGION_BIT,  //
+                       1, &barrier,                                                           //
+                       0, VK_NULL_HANDLE,                                                     //
+                       0, VK_NULL_HANDLE);
+}
+
+// Adds a simple command that ensures that all fragment shader reads writes have finished before all
+// subsequent fragment shader reads and writes (in the current scope).
+// Note that on NV hardware, unless you need a layout transition, there's little benefit to using
+// memory barriers for each of the individual objects (and in fact may run into issues with the
+// Vulkan specification).
+// The dependency flags are BY_REGION_BIT by default, since most calls to cmdBarrier come from
+// dependencies inside render passes, which require this (according to section 6.6.1).
+inline void cmdFragmentBarrierSimple(VkCommandBuffer cmdBuffer)
+{
+  const VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+
+  VkMemoryBarrier barrier = nvvk::make<VkMemoryBarrier>();
+  barrier.srcAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+  barrier.dstAccessMask   = barrier.srcAccessMask;
+
+  vkCmdPipelineBarrier(cmdBuffer, stageFlags, stageFlags, VK_DEPENDENCY_BY_REGION_BIT,  //
+                       1, &barrier,                                  //
+                       0, VK_NULL_HANDLE,                            //
+                       0, VK_NULL_HANDLE);
+}

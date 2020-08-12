@@ -477,13 +477,25 @@ void Sample::createRenderPasses()
     subpass.pColorAttachments       = &colorAttachmentRef;
     subpass.pDepthStencilAttachment = &depthAttachmentRef;
 
+    // We only need to specify one dependency: Since the subpass has a barrier, the subpass will
+    // need a self-dependency. (There are implicit external dependencies that are automatically added.)
+    VkSubpassDependency selfDependency;
+    selfDependency.srcSubpass = 0;
+    selfDependency.dstSubpass = 0;
+    selfDependency.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    selfDependency.dstStageMask = selfDependency.srcStageMask;
+    selfDependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    selfDependency.dstAccessMask = selfDependency.srcAccessMask;
+    selfDependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT; // Required, since we use framebuffer-space stages
+
     // No dependency on external data
     VkRenderPassCreateInfo rpInfo = nvvk::make<VkRenderPassCreateInfo>();
     rpInfo.attachmentCount        = static_cast<uint32_t>(attachments.size());
     rpInfo.pAttachments           = attachments.data();
     rpInfo.subpassCount           = 1;
     rpInfo.pSubpasses             = &subpass;
-    rpInfo.dependencyCount        = 0;
+    rpInfo.dependencyCount        = 1;
+    rpInfo.pDependencies          = &selfDependency;
 
     NVVK_CHECK(vkCreateRenderPass(m_context, &rpInfo, NULL, &m_renderPassColorDepthClear));
     m_debug.setObjectName(m_renderPassColorDepthClear, "m_renderPassColorDepthClear");

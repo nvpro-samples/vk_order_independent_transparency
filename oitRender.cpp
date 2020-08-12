@@ -175,6 +175,9 @@ void Sample::clearTransparentSimple(VkCommandBuffer& cmdBuffer)
                        1,                          // The number of VkImageSubresourceRanges below
                        &auxClearRanges             // Range of mipmap levels, array layers, and aspects to be cleared
   );
+
+  // Make sure this completes before using m_oitAuxImage again.
+  cmdTransferBarrierSimple(cmdBuffer);
 }
 
 void Sample::drawTransparentSimple(VkCommandBuffer& cmdBuffer, int numObjects)
@@ -187,6 +190,9 @@ void Sample::drawTransparentSimple(VkCommandBuffer& cmdBuffer, int numObjects)
     // Draw all objects
     vkCmdDrawIndexed(cmdBuffer, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
+
+  // Make sure the color pass completes before the composite pass
+  cmdFragmentBarrierSimple(cmdBuffer);
 
   // COMPOSITE
   // Sorts the stored fragments per pixel or sample and composites them onto the color image.
@@ -213,6 +219,9 @@ void Sample::clearTransparentLinkedList(VkCommandBuffer& cmdBuffer)
   vkCmdClearColorImage(cmdBuffer, m_oitAuxImage.image.image, m_oitAuxImage.currentLayout, &auxClearColor, 1, &auxClearRanges);
   auxClearRanges.layerCount = 1;
   vkCmdClearColorImage(cmdBuffer, m_oitCounterImage.image.image, m_oitCounterImage.currentLayout, &auxClearColor, 1, &auxClearRanges);
+
+  // Make sure this completes before using these images again.
+  cmdTransferBarrierSimple(cmdBuffer);
 }
 
 void Sample::drawTransparentLinkedList(VkCommandBuffer& cmdBuffer, int numObjects)
@@ -224,6 +233,9 @@ void Sample::drawTransparentLinkedList(VkCommandBuffer& cmdBuffer, int numObject
     // Draw all objects
     vkCmdDrawIndexed(cmdBuffer, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
+
+  // Make sure the color pass completes before the composite pass
+  cmdFragmentBarrierSimple(cmdBuffer);
 
   // COMPOSITE
   // Iterates through the linked lists and sorts and tail-blends fragments.
@@ -254,10 +266,8 @@ void Sample::clearTransparentLoop(VkCommandBuffer& cmdBuffer)
                     0xFFFFFFFFu);                // Data
   }
 
-  // In this algorithm, there are two spaces in the A-buffer for depth values
-  // and for colors, so this will also overwrite the color portion of the
-  // A-buffer - but this is OK in this case.
-  vkCmdFillBuffer(cmdBuffer, m_oitABuffer.buffer.buffer, 0, VK_WHOLE_SIZE, 0xFFFFFFFFu);
+  // Make sure this completes before using m_oitABuffer again.
+  cmdTransferBarrierSimple(cmdBuffer);
 }
 
 void Sample::drawTransparentLoop(VkCommandBuffer& cmdBuffer, int numObjects)
@@ -270,6 +280,9 @@ void Sample::drawTransparentLoop(VkCommandBuffer& cmdBuffer, int numObjects)
     vkCmdDrawIndexed(cmdBuffer, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
 
+  // Make sure the depth pass completes before the composite pass
+  cmdFragmentBarrierSimple(cmdBuffer);
+
   // COLOR
   // Uses the sorted depth information to sort colors into layers
   {
@@ -277,6 +290,9 @@ void Sample::drawTransparentLoop(VkCommandBuffer& cmdBuffer, int numObjects)
     // Draw all objects
     vkCmdDrawIndexed(cmdBuffer, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
+
+  // Make sure the color pass completes before the composite pass
+  cmdFragmentBarrierSimple(cmdBuffer);
 
   // COMPOSITE
   // Blends the sorted colors together.
@@ -292,6 +308,9 @@ void Sample::clearTransparentLoop64(VkCommandBuffer& cmdBuffer)
   // Sets all values in m_oitABuffer to 0xFFFFFFFF (depth), 0xFFFFFFFF (color)
   const nvvk::ProfilerVK::Section scopedTimer(m_profilerVK, "ClearLoop64", cmdBuffer);
   vkCmdFillBuffer(cmdBuffer, m_oitABuffer.buffer.buffer, 0, VK_WHOLE_SIZE, 0xFFFFFFFFu);
+
+  // Make sure this completes before using m_oitABuffer again.
+  cmdTransferBarrierSimple(cmdBuffer);
 }
 
 void Sample::drawTransparentLoop64(VkCommandBuffer& cmdBuffer, int numObjects)
@@ -303,6 +322,9 @@ void Sample::drawTransparentLoop64(VkCommandBuffer& cmdBuffer, int numObjects)
     // Draw all objects
     vkCmdDrawIndexed(cmdBuffer, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
+
+  // Make sure the depth + color pass completes before the composite pass
+  cmdFragmentBarrierSimple(cmdBuffer);
 
   // COMPOSITE
   // Blends the sorted colors together
@@ -334,8 +356,10 @@ void Sample::clearTransparentLock(VkCommandBuffer& cmdBuffer, bool useInterlock)
   vkCmdClearColorImage(cmdBuffer, m_oitAuxImage.image.image, m_oitAuxImage.currentLayout, &auxClearColor0, 1, &auxClearRanges);
   if(!useInterlock)
   {
+    // Also clear m_oitAuxSpinImage
     vkCmdClearColorImage(cmdBuffer, m_oitAuxSpinImage.image.image, m_oitAuxSpinImage.currentLayout, &auxClearColor0, 1, &auxClearRanges);
   }
+  cmdTransferBarrierSimple(cmdBuffer);
 }
 
 void Sample::drawTransparentLock(VkCommandBuffer& cmdBuffer, int numObjects, bool useInterlock)
@@ -347,6 +371,9 @@ void Sample::drawTransparentLock(VkCommandBuffer& cmdBuffer, int numObjects, boo
     // Draw all objects
     vkCmdDrawIndexed(cmdBuffer, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
+
+  // Make sure the color pass completes before the composite pass
+  cmdFragmentBarrierSimple(cmdBuffer);
 
   // COMPOSITE
   // Blends the sorted colors together
