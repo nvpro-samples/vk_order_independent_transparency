@@ -52,7 +52,7 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
 {
   destroyFrameImages();
 
-  const int swapchainWidth = m_windowState.m_swapSize[0];
+  const int swapchainWidth  = m_windowState.m_swapSize[0];
   const int swapchainHeight = m_windowState.m_swapSize[1];
   // We implement supersample anti-aliasing by rendering to a larger texture.
   const int bufferWidth  = swapchainWidth * m_state.supersample;
@@ -76,14 +76,13 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
     // Intermediate storage for resolve - 1spp, swapchain sized, with the same format as the color image.
     m_downsampleImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT,
                              m_colorImage.c_format, swapchainWidth, swapchainHeight, 1,
-                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                             1);
+                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, 1);
     m_downsampleImage.setName(m_debug, "m_downsampleTargetImage");
-    
+
     // Intermediate storage for rendering the GUI - 1spp, swapchain sized, with almost the same format as the swapchain
     // (with the exception that the channels have to be in the same order as m_colorImage)
     m_guiCompositeImage.create(m_context, m_allocatorDma, VK_IMAGE_TYPE_2D, VK_IMAGE_ASPECT_COLOR_BIT,
-                               VK_FORMAT_B8G8R8A8_UNORM, swapchainWidth, swapchainHeight, 1,
+                               m_guiCompositeColorFormat, swapchainWidth, swapchainHeight, 1,
                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                1);
     m_guiCompositeImage.setName(m_debug, "m_guiCompositeImage");
@@ -232,10 +231,8 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
     m_oitWeightedRevealImage.setName(m_debug, "m_oitWeightedRevealImage");
     // Transition both of them to color attachments, which is the way they'll first be used:
     // (see m_renderPassWeighted for reference)
-    m_oitWeightedColorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                         VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-    m_oitWeightedRevealImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                          VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+    m_oitWeightedColorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+    m_oitWeightedRevealImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
   }
 }
 
@@ -411,18 +408,62 @@ void Sample::updateAllDescriptorSets()
   vkUpdateDescriptorSets(m_context, static_cast<uint32_t>(updates.size()), updates.data(), 0, nullptr);
 }
 
-void Sample::destroyRenderPasses()
+void Sample::destroyGUIRenderPass()
+{
+  if(m_renderPassGUI != nullptr)
+  {
+    vkDestroyRenderPass(m_context, m_renderPassGUI, NULL);
+    m_renderPassGUI = nullptr;
+  }
+}
+
+void Sample::createGUIRenderPass() {
+  // The render pass can't be changed once it's passed to Dear ImGui.
+  assert(m_renderPassGUI == nullptr);
+
+  // This is a bit tricky, and ties in to exactly how copyOffscreenToBackBuffer works.
+  // It takes m_guiCompositeImage in layout TRANSFER_DST_OPTIMAL. Then it transitions it to
+  // TRANSFER_COLOR_ATTACHMENT_OPTIMAL for rendering, and then transitions it to TRANSFER_SRC_OPTIMAL
+  // for blitting to the swapchain.
+
+  // Only one attachment
+  VkAttachmentDescription attachment = {};
+  attachment.format                  = m_guiCompositeColorFormat;
+  attachment.samples                 = VK_SAMPLE_COUNT_1_BIT;
+  attachment.loadOp                  = VK_ATTACHMENT_LOAD_OP_LOAD;
+  attachment.storeOp                 = VK_ATTACHMENT_STORE_OP_STORE;
+  attachment.initialLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  attachment.finalLayout             = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;  // for blit operation
+  attachment.flags                   = 0;
+
+  VkAttachmentReference colorAttachmentRef = {};
+  colorAttachmentRef.attachment            = 0;
+  colorAttachmentRef.layout                = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+  VkSubpassDescription subpass    = {};
+  subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+  subpass.colorAttachmentCount    = 1;
+  subpass.pColorAttachments       = &colorAttachmentRef;
+  subpass.pDepthStencilAttachment = nullptr;
+
+  // TODO: Should this have a dependency on external data?
+  VkRenderPassCreateInfo rpInfo = nvvk::make<VkRenderPassCreateInfo>();
+  rpInfo.attachmentCount        = 1;
+  rpInfo.pAttachments           = &attachment;
+  rpInfo.subpassCount           = 1;
+  rpInfo.pSubpasses             = &subpass;
+  rpInfo.dependencyCount        = 0;
+
+  NVVK_CHECK(vkCreateRenderPass(m_context, &rpInfo, NULL, &m_renderPassGUI));
+  m_debug.setObjectName(m_renderPassGUI, "m_renderPassGUI");
+}
+
+void Sample::destroyNonGUIRenderPasses()
 {
   if(m_renderPassColorDepthClear != nullptr)
   {
     vkDestroyRenderPass(m_context, m_renderPassColorDepthClear, NULL);
     m_renderPassColorDepthClear = nullptr;
-  }
-
-  if(m_renderPassGUI != nullptr)
-  {
-    vkDestroyRenderPass(m_context, m_renderPassGUI, NULL);
-    m_renderPassGUI = nullptr;
   }
 
   if(m_renderPassWeighted != nullptr)
@@ -432,9 +473,9 @@ void Sample::destroyRenderPasses()
   }
 }
 
-void Sample::createRenderPasses()
+void Sample::createNonGUIRenderPasses()
 {
-  destroyRenderPasses();
+  destroyNonGUIRenderPasses();
 
   // m_renderPassColorDepthClear
   // Render pass for rendering to m_colorImage and m_depthImage, clearing them
@@ -480,13 +521,13 @@ void Sample::createRenderPasses()
     // We only need to specify one dependency: Since the subpass has a barrier, the subpass will
     // need a self-dependency. (There are implicit external dependencies that are automatically added.)
     VkSubpassDependency selfDependency;
-    selfDependency.srcSubpass = 0;
-    selfDependency.dstSubpass = 0;
-    selfDependency.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    selfDependency.dstStageMask = selfDependency.srcStageMask;
-    selfDependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    selfDependency.dstAccessMask = selfDependency.srcAccessMask;
-    selfDependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT; // Required, since we use framebuffer-space stages
+    selfDependency.srcSubpass      = 0;
+    selfDependency.dstSubpass      = 0;
+    selfDependency.srcStageMask    = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    selfDependency.dstStageMask    = selfDependency.srcStageMask;
+    selfDependency.srcAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    selfDependency.dstAccessMask   = selfDependency.srcAccessMask;
+    selfDependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;  // Required, since we use framebuffer-space stages
 
     // No dependency on external data
     VkRenderPassCreateInfo rpInfo = nvvk::make<VkRenderPassCreateInfo>();
@@ -499,45 +540,6 @@ void Sample::createRenderPasses()
 
     NVVK_CHECK(vkCreateRenderPass(m_context, &rpInfo, NULL, &m_renderPassColorDepthClear));
     m_debug.setObjectName(m_renderPassColorDepthClear, "m_renderPassColorDepthClear");
-  }
-
-  // m_renderPassGUI
-  {
-    // This is a bit tricky, and ties in to exactly how copyOffscreenToBackBuffer works.
-    // It takes m_guiCompositeImage in layout TRANSFER_DST_OPTIMAL. Then it transitions it to
-    // TRANSFER_COLOR_ATTACHMENT_OPTIMAL for rendering, and then transitions it to TRANSFER_SRC_OPTIMAL
-    // for blitting to the swapchain.
-
-    // Only one attachment
-    VkAttachmentDescription attachment = {};
-    attachment.format                  = m_guiCompositeImage.c_format;
-    attachment.samples                 = VK_SAMPLE_COUNT_1_BIT;
-    attachment.loadOp                  = VK_ATTACHMENT_LOAD_OP_LOAD;
-    attachment.storeOp                 = VK_ATTACHMENT_STORE_OP_STORE;
-    attachment.initialLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    attachment.finalLayout             = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;  // for blit operation
-    attachment.flags                   = 0;
-
-    VkAttachmentReference colorAttachmentRef = {};
-    colorAttachmentRef.attachment            = 0;
-    colorAttachmentRef.layout                = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-
-    VkSubpassDescription subpass    = {};
-    subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount    = 1;
-    subpass.pColorAttachments       = &colorAttachmentRef;
-    subpass.pDepthStencilAttachment = nullptr;
-
-    // TODO: Should this have a dependency on external data?
-    VkRenderPassCreateInfo rpInfo = nvvk::make<VkRenderPassCreateInfo>();
-    rpInfo.attachmentCount        = 1;
-    rpInfo.pAttachments           = &attachment;
-    rpInfo.subpassCount           = 1;
-    rpInfo.pSubpasses             = &subpass;
-    rpInfo.dependencyCount        = 0;
-
-    NVVK_CHECK(vkCreateRenderPass(m_context, &rpInfo, NULL, &m_renderPassGUI));
-    m_debug.setObjectName(m_renderPassGUI, "m_renderPassGUI");
   }
 
   // m_renderPassWeighted

@@ -1,4 +1,4 @@
-﻿/* Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+/* Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -67,8 +67,8 @@
 #include <stdexcept>
 #include <vector>
 
-#include <imgui/imgui_helper.h>
-#include <imgui/imgui_impl_vk.h>
+#include <imgui/backends/imgui_impl_vulkan.h>
+#include <imgui/extras/imgui_helper.h>
 
 #include <nvpwindow.hpp>
 
@@ -145,14 +145,15 @@ bool Sample::begin()
   ImGuiH::Init(m_windowState.m_winSize[0], m_windowState.m_winSize[1], this);
   ImGui::GetIO().IniFilename = nullptr;  // Don't create a .ini file for storing data across application launches
   // Initialize Dear ImGui's Vulkan renderer:
-  ImGui::InitVK(m_context, m_context.m_physicalDevice, m_context.m_queueGCT, m_context.m_queueGCT.familyIndex, nullptr, 0);  // ImGui will use its own render pass
+  m_debug.setup(m_context);
+  createGUIRenderPass();
+  ImGui::InitVK(m_context, m_context.m_physicalDevice, m_context.m_queueGCT, m_context.m_queueGCT.familyIndex, m_renderPassGUI, 0);
 
   // Initialize all Vulkan components that will be constant throughout the application lifecycle.
   // Components that can change are handled by updateRendererFromState.
   m_ringFences.init(m_context);
   m_ringCmdPool.init(m_context, m_context.m_queueGCT.familyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
   m_submission.init(m_context.m_queueGCT.queue);
-  m_debug.setup(m_context);
 
   createTextureSampler();
   m_deviceMemoryAllocator.init(m_context, m_context.m_physicalDevice);
@@ -325,8 +326,7 @@ void Sample::cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchai
 
     if(renderPassesNeedReinit)
     {
-      createRenderPasses();
-      ImGui::ReInitPipelinesVK(m_renderPassGUI);
+      createNonGUIRenderPasses();
     }
 
     if(framebuffersAndDescriptorsNeedReinit)
@@ -362,7 +362,8 @@ void Sample::end()
   destroyGraphicsPipelines();
   m_shaderModuleManager.deinit();
   destroyFramebuffers();
-  destroyRenderPasses();
+  destroyNonGUIRenderPasses();
+  destroyGUIRenderPass();
   destroyDescriptorSets();
   destroyFrameImages();
   destroyScene();
@@ -511,10 +512,11 @@ void Sample::destroyFramebuffers()
 
   vkDestroyFramebuffer(m_context, m_guiFramebuffer, nullptr);
   m_guiFramebuffer = nullptr;
-  
-  if (m_weightedFramebuffer != nullptr) {
-      vkDestroyFramebuffer(m_context, m_weightedFramebuffer, nullptr);
-      m_weightedFramebuffer = nullptr;
+
+  if(m_weightedFramebuffer != nullptr)
+  {
+    vkDestroyFramebuffer(m_context, m_weightedFramebuffer, nullptr);
+    m_weightedFramebuffer = nullptr;
   }
 }
 
@@ -582,13 +584,13 @@ void Sample::createFramebuffers()
 
 void Sample::setUpViewportsAndScissors()
 {
-  m_scissorGUI              = {0}; // Zero-initialize
-  m_scissorGUI.extent.width = m_windowState.m_swapSize[0];
+  m_scissorGUI               = {0};  // Zero-initialize
+  m_scissorGUI.extent.width  = m_windowState.m_swapSize[0];
   m_scissorGUI.extent.height = m_windowState.m_swapSize[1];
 
-  m_viewportGUI = {0}; // Zero-initialize
-  m_viewportGUI.width = static_cast<float>(m_scissorGUI.extent.width);
-  m_viewportGUI.height = static_cast<float>(m_scissorGUI.extent.height);
+  m_viewportGUI          = {0};  // Zero-initialize
+  m_viewportGUI.width    = static_cast<float>(m_scissorGUI.extent.width);
+  m_viewportGUI.height   = static_cast<float>(m_scissorGUI.extent.height);
   m_viewportGUI.minDepth = 0.0f;
   m_viewportGUI.maxDepth = 1.0f;
 }
@@ -961,7 +963,7 @@ void Sample::copyOffscreenToBackBuffer(int winWidth, int winHeight, ImDrawData* 
     vkCmdSetViewport(cmdBuffer, 0, 1, &m_viewportGUI);
     vkCmdSetScissor(cmdBuffer, 0, 1, &m_scissorGUI);
 
-    ImGui::RenderDrawDataVK(cmdBuffer, imguiDrawData);
+    ImGui_ImplVulkan_RenderDrawData(imguiDrawData, cmdBuffer);
 
     vkCmdEndRenderPass(cmdBuffer);
 
@@ -1094,7 +1096,7 @@ void Sample::think(double time)
 
 int main(int argc, const char** argv)
 {
-  NVPSystem system(argv[0], PROJECT_NAME);
+  NVPSystem system(PROJECT_NAME);
 
   Sample sample;
   sample.m_contextInfo.addDeviceExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);

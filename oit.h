@@ -31,7 +31,7 @@
 // specifically), oitRender.cpp (main command buffer rendering, without GUI),
 // oitGui.cpp (GUI), and main.cpp (other resource creation and main()).
 
-#include <imgui/imgui_helper.h>
+#include <imgui/extras/imgui_helper.h>
 
 #include <nvh/cameracontrol.hpp>
 #include <nvh/fileoperations.hpp>
@@ -208,11 +208,11 @@ public:
   double           m_uiTime = 0;
 
   // Application state
-  State              m_state;          // This frame's state
-  State              m_lastState;      // Last frame's state
-  bool               m_lastVsync = false;      // Last frame's vsync state
-  nvh::CameraControl m_cameraControl;  // A controllable camera
-  SceneData          m_sceneUbo;       // Uniform Buffer Object for the scene, depends on m_cameraControl.
+  State              m_state;              // This frame's state
+  State              m_lastState;          // Last frame's state
+  bool               m_lastVsync = false;  // Last frame's vsync state
+  nvh::CameraControl m_cameraControl;      // A controllable camera
+  SceneData          m_sceneUbo;           // Uniform Buffer Object for the scene, depends on m_cameraControl.
   uint32_t           m_objectTriangleIndices = 0;  // The number of indices used in each sphere. (All objects have the same number of indices.)
   uint32_t           m_sceneTriangleIndices = 0;  // The total number of indices in the scene.
 
@@ -220,6 +220,7 @@ public:
   // creating the images yet.
   const VkFormat m_oitWeightedColorFormat  = VK_FORMAT_R16G16B16A16_SFLOAT;
   const VkFormat m_oitWeightedRevealFormat = VK_FORMAT_R16_SFLOAT;
+  const VkFormat m_guiCompositeColorFormat = VK_FORMAT_B8G8R8A8_UNORM;
 
   uint32_t m_frame = 0;
 
@@ -308,10 +309,16 @@ public:
   void updateAllDescriptorSets();
 
   // Device must not be using resource when called.
-  void destroyRenderPasses();
+  void destroyGUIRenderPass();
+
+  // Creates the ImGui render pass. This should not be called twice.
+  void createGUIRenderPass();
 
   // Device must not be using resource when called.
-  void createRenderPasses();
+  void destroyNonGUIRenderPasses();
+
+  // Creates or recreates all non-ImGui render passes.
+  void createNonGUIRenderPasses();
 
   // Device must not be using resource when called.
   void destroyFramebuffers();
