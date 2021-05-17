@@ -141,7 +141,7 @@ The shader files are laid out as follows:
 To build this sample, first install a recent [Vulkan SDK](https://www.lunarg.com/vulkan-sdk/). Then do one of the following:
 
 * To clone all NVIDIA DesignWorks Samples, clone https://github.com/nvpro-samples/build_all, then run one of the `clone_all` scripts in that directory.
-* Or to get the files for this sample without the other samples, clone this repository as well as https://github.com/nvpro-samples/shared_sources into a single directory. On Windows, you'll need to clone https://github.com/nvpro-samples/shared_external into the directory as well.
+* Or to get the files for this sample without the other samples, clone this repository as well as https://github.com/nvpro-samples/nvpro_core into a single directory.
 
 You can then use CMake to generate and subsequently build the project.
 

@@ -1,29 +1,22 @@
-/* Copyright (c) 2020, NVIDIA CORPORATION. All rights reserved.
+/*
+ * Copyright (c) 2020-2021, NVIDIA CORPORATION.  All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *  * Neither the name of NVIDIA CORPORATION nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
- * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
- * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
- * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
- * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
- * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2021 NVIDIA CORPORATION
+ * SPDX-License-Identifier: Apache-2.0
  */
+
 #pragma once
 
 // Contains utility classes for this sample.
@@ -36,10 +29,11 @@
 #include <nvh/geometry.hpp>
 #include <nvmath/nvmath.h>
 #include <nvmath/nvmath_glsltypes.h>
-#include <nvvk/allocator_dma_vk.hpp>
+#include <nvvk/resourceallocator_vk.hpp>
 #include <nvvk/buffers_vk.hpp>
 #include <nvvk/context_vk.hpp>
 #include <nvvk/debug_util_vk.hpp>
+#include <nvvk/images_vk.hpp>
 #include <nvvk/structs_vk.hpp>
 #include <vulkan/vulkan_core.h>
 
@@ -100,13 +94,13 @@ struct Vertex
 // that works for this sample!
 struct BufferAndView
 {
-  nvvk::BufferDma buffer;
+  nvvk::Buffer buffer;
   VkBufferView    view = nullptr;
   VkDeviceSize    size = 0;  // In bytes
 
   // Creates a buffer and view with the given size, usage, and view format.
   // The memory properties are always VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT.
-  void create(nvvk::Context& context, nvvk::AllocatorDma& allocator, VkDeviceSize bufferSize, VkBufferUsageFlags bufferUsage, VkFormat viewFormat)
+  void create(nvvk::Context& context, nvvk::ResourceAllocatorDma& allocator, VkDeviceSize bufferSize, VkBufferUsageFlags bufferUsage, VkFormat viewFormat)
   {
     assert(buffer.buffer == nullptr);  // Destroy the buffer before recreating it, please!
     buffer = allocator.createBuffer(bufferSize, bufferUsage);
@@ -118,7 +112,7 @@ struct BufferAndView
   }
 
   // To destroy the object, provide its context and allocator.
-  void destroy(nvvk::Context& context, nvvk::AllocatorDma& allocator)
+  void destroy(nvvk::Context& context, nvvk::ResourceAllocatorDma& allocator)
   {
     if(buffer.buffer != nullptr)
     {
@@ -147,7 +141,7 @@ struct BufferAndView
 // Creates a simple texture with 1 mip, 1 array layer, 1 sample per texel, with
 // optimal tiling, in an undefined layout, with the VK_IMAGE_USAGE_SAMPLED_BIT flag
 // (and possibly additional flags), and accessible only from a single queue family.
-inline nvvk::ImageDma createImageSimple(nvvk::AllocatorDma& allocator,
+inline nvvk::Image createImageSimple(nvvk::ResourceAllocatorDma& allocator,
                                         VkImageType         imageType,
                                         VkFormat            format,
                                         uint32_t            width,
@@ -204,7 +198,7 @@ inline void cmdImageTransition(VkCommandBuffer    cmd,
 // current state. It's a simplification that works for this sample!
 struct ImageAndView
 {
-  nvvk::ImageDma image;
+  nvvk::Image image;
   VkImageView    view = nullptr;
   // Information you might need, but please don't modify
   uint32_t c_width  = 0;                    // Should not be changed once the texture is created!
@@ -222,7 +216,7 @@ public:
   // with optimal tiling, in an undefined layout, with the VK_IMAGE_USAGE_SAMPLED_BIT flag
   // (and possibly additional flags), and accessible only from a single queue family.
   void create(nvvk::Context&      context,
-              nvvk::AllocatorDma& allocator,
+              nvvk::ResourceAllocatorDma& allocator,
               VkImageType         imageType,
               VkImageAspectFlags  viewAspect,
               VkFormat            format,
@@ -246,7 +240,7 @@ public:
   }
 
   // To destroy the object, provide its context and allocator.
-  void destroy(nvvk::Context& context, nvvk::AllocatorDma& allocator)
+  void destroy(nvvk::Context& context, nvvk::ResourceAllocatorDma& allocator)
   {
     if(view != nullptr)
     {
