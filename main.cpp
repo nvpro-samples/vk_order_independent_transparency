@@ -149,6 +149,7 @@ bool Sample::begin()
   m_submission.init(m_context.m_queueGCT.queue);
 
   createTextureSampler();
+  
   m_allocatorDma.init(m_context.m_device, m_context.getPhysicalDevices().front());
   // Configure shader system (note that this also creates shader modules as we add them)
   {
