@@ -304,13 +304,17 @@ void Sample::updateAllDescriptorSets()
 {
   std::vector<VkWriteDescriptorSet> updates;
 
+  // We create one descriptor set per swapchain image.
+  const uint32_t totalDescriptorSets = m_swapChain.getImageCount();
+
   // Information about the buffer and image descriptors we'll use.
   // When constructing VkWriteDescriptorSet objects, we'll take references
   // to these.
 
   // UBO_SCENE
-  std::array<VkDescriptorBufferInfo, 3> uboBufferInfo;
-  for(size_t ring = 0; ring < m_swapChain.getImageCount(); ring++)
+  std::vector<VkDescriptorBufferInfo> uboBufferInfo;
+  uboBufferInfo.resize(totalDescriptorSets);
+  for(uint32_t ring = 0; ring < totalDescriptorSets; ring++)
   {
     uboBufferInfo[ring].buffer = m_uniformBuffers[ring].buffer;
     uboBufferInfo[ring].offset = 0;
@@ -347,7 +351,7 @@ void Sample::updateAllDescriptorSets()
   oitABufferInfo.range                  = VK_WHOLE_SIZE;
 
   // Descriptor sets without the color buffer bound to the shader stage
-  for(uint32_t ring = 0; ring < m_swapChain.getImageCount(); ring++)
+  for(uint32_t ring = 0; ring < totalDescriptorSets; ring++)
   {
     updates.push_back(m_descriptorInfo.makeWrite(ring, UBO_SCENE, &uboBufferInfo[ring]));
 
