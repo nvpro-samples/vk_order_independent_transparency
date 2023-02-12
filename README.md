@@ -99,7 +99,9 @@ If the device supports the `VK_EXT_fragment_shader_interlock` extension, then we
 
 To do this, we call `beginInvocationInterlockARB` or `beginInvocationInterlockNV` before entering the critical section (depending on whether the GLSL code supports the `GL_ARB_fragment_shader_interlock` or `GL_NV_fragment_shader_interlock`extension), then call `endInvocationInterlockARB` or `endInvocationInterlockNV` to end the critical section.
 
-This is similar to the example for Spinlock, except with spin locks replaced by invocation interlocks.
+Additionally, the critical section is entered in primitive order, so the selection of the fragment to tail blend in each invocation is guaranteed to be stable between frames.
+
+The shader code is similar to the example for Spinlock, except with spin locks replaced by invocation interlocks.
 
 ### Weighted, Blended Order-Independent Transparency
 
