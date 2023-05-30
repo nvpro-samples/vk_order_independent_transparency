@@ -60,6 +60,7 @@
 #include <stdexcept>
 #include <vector>
 
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include <backends/imgui_vk_extra.h>
 #include <imgui/imgui_helper.h>
 
