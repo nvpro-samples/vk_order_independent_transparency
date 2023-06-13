@@ -100,6 +100,7 @@ void main()
   }
 #endif
 
+  bool evict = true;
   if(canInsert)
   {
     // Try to insert zcur in the place of the first element of the array that
@@ -112,6 +113,7 @@ void main()
       if(ztest == packUint2x32(uvec2(0xFFFFFFFFu, 0xFFFFFFFFu)))
       {
         // We just inserted zcur into an empty space in the array.
+        evict = false;
         break;
       }
 
@@ -119,15 +121,16 @@ void main()
     }
   }
 
-  if(canInsert)
+  if(!evict)
   {
-    // Inserted, so make this color transparent:
+    // Inserted without having to evict, so make this color transparent:
     outColor = vec4(0);
   }
   else
   {
 #if OIT_TAILBLEND
-    // Unpack the current color and premultiply it
+    // Unpack the color of the fragment that cannot fit into the A-buffer and
+    // premultiply it
     const uvec2 current      = unpackUint2x32(zcur);
     const vec4  currentColor = unPremultSRGBToLinear(unpackUnorm4x8(current.x));
     outColor                 = vec4(currentColor.rgb * currentColor.a, currentColor.a);
