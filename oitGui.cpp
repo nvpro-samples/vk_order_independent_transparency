@@ -60,7 +60,7 @@ void Sample::DoObjectSizeText(ImageAndView iv, const char* name)
 
 void Sample::DoGUI(int width, int height, double time)
 {
-  ImGui::GetIO().DeltaTime = static_cast<float>(time - m_uiTime);
+  ImGui::GetIO().DeltaTime   = static_cast<float>(time - m_uiTime);
   ImGui::GetIO().DisplaySize = ImVec2(static_cast<float>(width), static_cast<float>(height));
 
   m_uiTime = time;
@@ -157,6 +157,17 @@ void Sample::DoGUI(int width, int height, double time)
           "Chooses whether to discard fragments that cannot fit "
           "into the A-buffer, or to blend them out-of-order using standard "
           "transparency blending instead.");
+    }
+    if(m_state.algorithm == OIT_INTERLOCK)
+    {
+      ImGui::Checkbox("Interlock is ordered", &m_state.interlockIsOrdered);
+      LastItemTooltip(
+          "If checked, the 'interlock' algorithm uses ordered interlock "
+          "(layout(sample_interlock_ordered) and layout(pixel_interlock_ordered)), "
+          "which means that fragments will be processed in primitive order. "
+          "In particular, this makes it so that tail-blended fragments are "
+          "blended in a consistent order. When this is unchecked, the "
+          "interlock algorithm uses unordered interlock instead.");
     }
 
     if(m_state.algorithm != OIT_WEIGHTED && m_state.algorithm != OIT_LINKEDLIST)

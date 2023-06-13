@@ -19,15 +19,19 @@
 
 
 // OIT_INTERLOCK supports MSAA.
+//
 // The color pass sorts the frontmost OIT_LAYERS (depth, color) pairs per pixel
 // in the A-buffer, tail blending colors that make it in.
 // To do this, we insert the first OIT_LAYERS fragments; any further fragments
 // then test to see if they're in the frontmost OIT_LAYERS fragments so far, and
 // if so, replace the furthest fragment.
-// Insertion attempts are done in primitive order, so the selection of the
-// fragment to tail blend in each invocation is guaranteed to be stable between
-// frames. Also using the ordered interlock mode even without tail blending for
-// stability if multiple fragments share the same depth.
+//
+// If OIT_INTERLOCK_IS_ORDERED is set to 1, then insertion attempts are done in
+// primitive order, so the selection of the fragment to tail blend in each
+// invocation is guaranteed to be stable between frames. Additionally, this
+// improves stability even without tail blending: if multiple fragments share
+// the same depth, the one that's blended first is consistently defined.
+//
 // The resolve pass then sorts and blends the fragments from front to back.
 
 #version 460
@@ -49,9 +53,17 @@
 
 #if OIT_SAMPLE_SHADING
 // Enables interlock on individual samples.
+#if OIT_INTERLOCK_IS_ORDERED
 layout(sample_interlock_ordered) in;
+#else   // #if OIT_INTERLOCK_IS_ORDERED
+layout(sample_interlock_unordered) in;
+#endif  // #if OIT_INTERLOCK_IS_ORDERED
 #else   // #if OIT_SAMPLE_SHADING
+#if OIT_INTERLOCK_IS_ORDERED
 layout(pixel_interlock_ordered) in;
+#else   // #if OIT_INTERLOCK_IS_ORDERED
+layout(pixel_interlock_unordered) in;
+#endif  // #if OIT_INTERLOCK_IS_ORDERED
 #endif  // #if OIT_SAMPLE_SHADING
 
 #if GL_NV_fragment_shader_interlock
@@ -139,7 +151,7 @@ void main()
 #endif                                            // #if OIT_TAILBLEND
 }
 
-#endif // #if PASS == PASS_COLOR
+#endif  // #if PASS == PASS_COLOR
 
 ////////////////////////////////////////////////////////////////////////////////
 // Composite                                                                  //
@@ -217,4 +229,4 @@ void main()
   outColor = colorSum;
 }
 
-#endif // #if PASS == PASS_COMPOSITE
+#endif  // #if PASS == PASS_COMPOSITE

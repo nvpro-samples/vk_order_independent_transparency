@@ -104,6 +104,7 @@ layout(std140, binding = UBO_SCENE) uniform sceneBuffer
 #define OIT_LAYERS 8
 #define OIT_LOOP_DEPTH
 #define OIT_TAILBLEND 1
+#define OIT_INTERLOCK_IS_ORDERED 1
 #define OIT_MSAA 8
 #define OIT_SAMPLE_SHADING 1
 #endif

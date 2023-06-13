@@ -232,7 +232,6 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
 void Sample::destroyDescriptorSets()
 {
   m_descriptorInfo.deinit();
-  m_descriptorInfo.setBindings({});  // i.e. clear all bindings.
 }
 
 void Sample::createDescriptorSets()
@@ -414,7 +413,8 @@ void Sample::destroyGUIRenderPass()
   }
 }
 
-void Sample::createGUIRenderPass() {
+void Sample::createGUIRenderPass()
+{
   // The render pass can't be changed once it's passed to Dear ImGui.
   assert(m_renderPassGUI == nullptr);
 
@@ -655,9 +655,14 @@ void Sample::updateShaderDefinitions()
       "#extension GL_GOOGLE_cpp_style_line_directive : enable\n"
       "#define OIT_LAYERS %d\n"
       "#define OIT_TAILBLEND %d\n"
+      "#define OIT_INTERLOCK_IS_ORDERED %d\n"
       "#define OIT_MSAA %d\n"
       "#define OIT_SAMPLE_SHADING %d\n",
-      m_state.oitLayers, m_state.tailBlend ? 1 : 0, m_state.msaa, m_state.sampleShading ? 1 : 0);
+      m_state.oitLayers,                   //
+      m_state.tailBlend ? 1 : 0,           //
+      m_state.interlockIsOrdered ? 1 : 0,  //
+      m_state.msaa,                        //
+      m_state.sampleShading ? 1 : 0);
 }
 
 void Sample::createOrReloadShaderModules()

@@ -72,6 +72,7 @@ struct State
   uint32_t linkedListAllocatedPerElement = 10;
   uint32_t percentTransparent            = 100;
   bool     tailBlend                     = true;
+  bool     interlockIsOrdered            = true;
   uint32_t numObjects                    = 1024;
   uint32_t subdiv                        = 16;
   float    scaleMin                      = 0.1f;
@@ -123,12 +124,12 @@ class Sample : public nvvk::AppWindowProfilerVK
 {
 public:
   // Renderer state
-  nvvk::BatchSubmission       m_submission;
-  nvvk::RingFences            m_ringFences;
-  nvvk::RingCommandPool       m_ringCmdPool;
-  nvvk::ResourceAllocatorDma  m_allocatorDma;
-  nvvk::DebugUtil             m_debug = nvvk::DebugUtil();
-  bool                        m_submissionWaitForRead;
+  nvvk::BatchSubmission      m_submission;
+  nvvk::RingFences           m_ringFences;
+  nvvk::RingCommandPool      m_ringCmdPool;
+  nvvk::ResourceAllocatorDma m_allocatorDma;
+  nvvk::DebugUtil            m_debug = nvvk::DebugUtil();
+  bool                       m_submissionWaitForRead = false;
   // Per-frame objects
   std::vector<nvvk::Buffer> m_uniformBuffers;
   // We only need one of each of these resources, since only one draw operation will run at once.
@@ -207,8 +208,8 @@ public:
   bool               m_lastVsync = false;  // Last frame's vsync state
   nvh::CameraControl m_cameraControl;      // A controllable camera
   SceneData          m_sceneUbo;           // Uniform Buffer Object for the scene, depends on m_cameraControl.
-  uint32_t           m_objectTriangleIndices = 0;  // The number of indices used in each sphere. (All objects have the same number of indices.)
-  uint32_t           m_sceneTriangleIndices = 0;  // The total number of indices in the scene.
+  uint32_t m_objectTriangleIndices = 0;  // The number of indices used in each sphere. (All objects have the same number of indices.)
+  uint32_t m_sceneTriangleIndices = 0;  // The total number of indices in the scene.
 
   // We make these constants so that we can create their render passes without
   // creating the images yet.

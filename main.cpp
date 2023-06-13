@@ -150,7 +150,7 @@ bool Sample::begin()
   m_submission.init(m_context.m_queueGCT.queue);
 
   createTextureSampler();
-  
+
   m_allocatorDma.init(m_context.m_device, m_context.getPhysicalDevices().front());
   // Configure shader system (note that this also creates shader modules as we add them)
   {
@@ -251,11 +251,12 @@ void Sample::cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchai
 
   const bool vsyncChanged = (m_lastVsync != getVsync()) || forceRebuildAll;
 
-  const bool shadersNeedUpdate = (m_state.algorithm != m_lastState.algorithm)             //
-                                 || (m_state.oitLayers != m_lastState.oitLayers)          //
-                                 || (m_state.tailBlend != m_lastState.tailBlend)          //
-                                 || (m_state.msaa != m_lastState.msaa)                    //
-                                 || (m_state.sampleShading != m_lastState.sampleShading)  //
+  const bool shadersNeedUpdate = (m_state.algorithm != m_lastState.algorithm)                       //
+                                 || (m_state.oitLayers != m_lastState.oitLayers)                    //
+                                 || (m_state.tailBlend != m_lastState.tailBlend)                    //
+                                 || (m_state.interlockIsOrdered != m_lastState.interlockIsOrdered)  //
+                                 || (m_state.msaa != m_lastState.msaa)                              //
+                                 || (m_state.sampleShading != m_lastState.sampleShading)            //
                                  || forceRebuildAll;
 
   const bool sceneNeedsReinit = (m_state.numObjects != m_lastState.numObjects)     //
@@ -892,11 +893,11 @@ void Sample::copyOffscreenToBackBuffer(int winWidth, int winHeight, ImDrawData* 
       region.srcSubresource.layerCount = 1;
       region.dstSubresource            = region.srcSubresource;
       region.srcOffsets[1]             = {static_cast<int32_t>(m_colorImage.c_width),   //
-                              static_cast<int32_t>(m_colorImage.c_height),  //
-                              1};
+                                          static_cast<int32_t>(m_colorImage.c_height),  //
+                                          1};
       region.dstOffsets[1]             = {static_cast<int32_t>(m_downsampleImage.c_width),   //
-                              static_cast<int32_t>(m_downsampleImage.c_height),  //
-                              1};
+                                          static_cast<int32_t>(m_downsampleImage.c_height),  //
+                                          1};
 
       vkCmdBlitImage(cmdBuffer,                        // Command buffer
                      m_colorImage.image.image,         // Source image
@@ -1092,26 +1093,36 @@ int main(int argc, const char** argv)
   NVPSystem system(PROJECT_NAME);
 
   Sample sample;
-  sample.m_contextInfo.addDeviceExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
   sample.m_contextInfo.addDeviceExtension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
-  sample.m_contextInfo.addDeviceExtension(VK_KHR_MAINTENANCE3_EXTENSION_NAME);
-  VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR physicalDevicePipelineExecutableProprtiesFeaturesKHR = {
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR, nullptr, VK_TRUE};
-  sample.m_contextInfo.addDeviceExtension(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME, true,
-                                          &physicalDevicePipelineExecutableProprtiesFeaturesKHR);
+  sample.m_contextInfo.addDeviceExtension(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME);
+  sample.m_contextInfo.addDeviceExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
+  // Enable VK_KHR_maintenance4 so that the depth pass' fragment shader in
+  // loop32, which does not consume the interpolants from the vertex shader,
+  // does not produce a validation warning:
+  VkPhysicalDeviceMaintenance4Features m_maintenance4Features{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,  // sType
+      nullptr,                                                   // pNext
+      VK_TRUE                                                    // maintenance4
+  };
+  sample.m_contextInfo.addDeviceExtension(VK_KHR_MAINTENANCE_4_EXTENSION_NAME, false, &m_maintenance4Features);
 
-  // These extensions are both optional - there are algorithms we can use if we have them, but
+  // The extensions below are optional - there are algorithms we can use if we have them, but
   // if the device doesn't support these extensions, we don't allow the user to select those algorithms.
-  sample.m_contextInfo.addDeviceExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, true);
-  // VK_EXT_FRAGMENT_SHADER_INTERLOCK uses an extension which will be passed to device creation via
-  // VkDeviceCreateInfo's pNext chain:
   VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT m_fragmentShaderInterlockFeatures{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT,  // sType
       nullptr,                                                                   // pNext
       VK_TRUE,                                                                   // fragmentShaderSampleInterlock
       VK_TRUE,                                                                   // fragmentShaderPixelInterlock
-      VK_FALSE};
+      VK_FALSE  // fragmentShaderShadingRateInterlock (we don't need this)
+  };
   sample.m_contextInfo.addDeviceExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, true, &m_fragmentShaderInterlockFeatures);
+  VkPhysicalDeviceShaderAtomicInt64Features m_shaderAtomicInt64Features{
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES,  // sType
+      nullptr,                                                         // pNext
+      VK_TRUE,                                                         // shaderBufferInt64Atomics
+      VK_FALSE                                                         // shaderSharedInt64Atomics (we don't need this)
+  };
+  sample.m_contextInfo.addDeviceExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, true, &m_shaderAtomicInt64Features);
 
   const int SAMPLE_WIDTH  = 1200;
   const int SAMPLE_HEIGHT = 1024;
