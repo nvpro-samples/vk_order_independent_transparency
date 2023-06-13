@@ -20,10 +20,14 @@
 
 // OIT_INTERLOCK supports MSAA.
 // The color pass sorts the frontmost OIT_LAYERS (depth, color) pairs per pixel
-// in the A-buffer, unordered, tail blending colors that make it in. To do this,
-// we insert the first OIT_LAYERS fragments; any further fragments then test to
-// see if they're in the frontmost OIT_LAYERS fragments so far, and if so,
-// replace the furthest fragment.
+// in the A-buffer, tail blending colors that make it in.
+// To do this, we insert the first OIT_LAYERS fragments; any further fragments
+// then test to see if they're in the frontmost OIT_LAYERS fragments so far, and
+// if so, replace the furthest fragment.
+// Insertion attempts are done in primitive order, so the selection of the
+// fragment to tail blend in each invocation is guaranteed to be stable between
+// frames. Also using the ordered interlock mode even without tail blending for
+// stability if multiple fragments share the same depth.
 // The resolve pass then sorts and blends the fragments from front to back.
 
 #version 460
@@ -45,9 +49,9 @@
 
 #if OIT_SAMPLE_SHADING
 // Enables interlock on individual samples.
-layout(sample_interlock_unordered) in;
+layout(sample_interlock_ordered) in;
 #else   // #if OIT_SAMPLE_SHADING
-layout(pixel_interlock_unordered) in;
+layout(pixel_interlock_ordered) in;
 #endif  // #if OIT_SAMPLE_SHADING
 
 #if GL_NV_fragment_shader_interlock

@@ -26,15 +26,15 @@ WBOIT, on the other hand, uses a constant amount of space per pixel/sample, but 
 
 Here's a quick overview of the properties of each algorithm. See the algorithm descriptions below for more details:
 
-| Name        | Correctness Bound By           | MSAA Support | Bytes per Pixel or Sample                                    | Sorts Front | Number of Transparent Draws | Additional Extensions Required |
-| ----------- | ------------------------------ | ------------ | ------------------------------------------------------------ | ----------- | --------------------------- | ------------------------------ |
-| Simple      | `OIT_LAYERS`, draw order       | Yes          | `8*OIT_LAYERS+4`, or `16*OIT_LAYERS+4` (with antialiasing masks) | No          | 1                           | No                             |
-| Linked List | `OIT_LAYERS` and A-buffer size | Yes          | `16` (per element) + `4`                                     | Yes         | 1                           | No                             |
-| Loop32      | `OIT_LAYERS`                   | No           | `8*OIT_LAYERS+4`                                             | Yes         | 2                           | No                             |
-| Loop64      | `OIT_LAYERS`                   | No           | `8*OIT_LAYERS+4`                                             | Yes         | 1                           | Yes                            |
-| Spinlock    | `OIT_LAYERS`                   | Yes          | `8*OIT_LAYERS+12`, or `16*OIT_LAYERS+12` (with antialiasing masks) | Yes         | 1                           | No                             |
-| Interlock   | `OIT_LAYERS`                   | Yes          | `16*OIT_LAYERS+8`, or `32*OIT_LAYERS+8` (with antialiasing masks) | Yes         | 1                           | Yes                            |
-| WBOIT       | Approximation                  | Yes          | `20`                                                         | Yes         | 1                           | No                             |
+| Name        | Correctness Bound By           | MSAA Support | Bytes per Pixel or Sample                                          | Stability Between Frames Guaranteed | Sorts Front | Number of Transparent Draws | Additional Extensions Required |
+| ----------- | ------------------------------ | ------------ | ------------------------------------------------------------------ | ----------------------------------- | ----------- | --------------------------- | ------------------------------ |
+| Simple      | `OIT_LAYERS`, draw order       | Yes          | `8*OIT_LAYERS+4`, or `16*OIT_LAYERS+4` (with antialiasing masks)   | No                                  | No          | 1                           | No                             |
+| Linked List | `OIT_LAYERS` and A-buffer size | Yes          | `16` (per element) + `4`                                           | No                                  | Yes         | 1                           | No                             |
+| Loop32      | `OIT_LAYERS`                   | No           | `8*OIT_LAYERS+4`                                                   | Yes                                 | Yes         | 2                           | No                             |
+| Loop64      | `OIT_LAYERS`                   | No           | `8*OIT_LAYERS+4`                                                   | Without Tail Blend                  | Yes         | 1                           | Yes                            |
+| Spinlock    | `OIT_LAYERS`                   | Yes          | `8*OIT_LAYERS+12`, or `16*OIT_LAYERS+12` (with antialiasing masks) | Without Tail Blend                  | Yes         | 1                           | No                             |
+| Interlock   | `OIT_LAYERS`                   | Yes          | `16*OIT_LAYERS+8`, or `32*OIT_LAYERS+8` (with antialiasing masks)  | Yes                                 | Yes         | 1                           | Yes                            |
+| WBOIT       | Approximation                  | Yes          | `20`                                                               | Yes                                 | Yes         | 1                           | No                             |
 
 This sample stores the vertex and index data for all of its spheres in a single mesh. It draws the faces corresponding to the last `100 - percentTransparent`% of spheres using an opaque shader, then draws the first `percentTransparent`% of spheres using the algorithm's `drawTransparent` method.
 
@@ -71,6 +71,8 @@ This algorithm uses 32-bit atomic operations to first sort the depths of each pi
 
 For instance, given the four fragments in the Simple example with `OIT_LAYERS` = 2 without antialiasing, the depth shader would compute that the frontmost sorted depths are `(0.1, 0.2)`. This step would also tail blend `(c4, 0.4)` and `(c3, 0.3)`. It would then match the colors to the depths to get `(c1, c2)`, and then blend this together.
 
+Because the final decision on whether each fragment should be included in the list is made for all fragments deterministically, based on their depths, before the color pass, with the remaining fragments tail blended in primitive order, the result is guaranteed to be stable between frames, as long as multiple fragments for a single pixel don't share the same depth.
+
 ### Loop64
 
 Loop32 uses three shaders, and requires drawing transparent objects twice. If the device supports the `VK_KHR_shader_atomic_int64` extension, then we can pack colors and depths together into a 64-bit integer, and sort colors and depths together by sorting the 64-bit integers. This requires us to only draw transparent objects once.
@@ -99,7 +101,9 @@ If the device supports the `VK_EXT_fragment_shader_interlock` extension, then we
 
 To do this, we call `beginInvocationInterlockARB` or `beginInvocationInterlockNV` before entering the critical section (depending on whether the GLSL code supports the `GL_ARB_fragment_shader_interlock` or `GL_NV_fragment_shader_interlock`extension), then call `endInvocationInterlockARB` or `endInvocationInterlockNV` to end the critical section.
 
-This is similar to the example for Spinlock, except with spin locks replaced by invocation interlocks.
+Additionally, the critical section is entered in primitive order, so the selection of the fragment to tail blend in each invocation is guaranteed to be stable between frames.
+
+The shader code is similar to the example for Spinlock, except with spin locks replaced by invocation interlocks.
 
 ### Weighted, Blended Order-Independent Transparency
 
