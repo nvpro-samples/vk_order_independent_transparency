@@ -151,7 +151,7 @@ bool Sample::begin()
 
   createTextureSampler();
 
-  m_allocatorDma.init(m_context.m_device, m_context.getPhysicalDevices().front());
+  m_allocatorDma.init(m_context.m_device, m_context.m_physicalDevice);
   // Configure shader system (note that this also creates shader modules as we add them)
   {
     // Initialize shader system (this keeps track of shaders so that you can reload all of them at once):
