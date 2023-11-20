@@ -29,8 +29,7 @@
 #include <nvh/cameracontrol.hpp>
 #include <nvh/fileoperations.hpp>
 #include <nvh/geometry.hpp>
-#include <nvmath/nvmath.h>
-#include <nvmath/nvmath_glsltypes.h>
+#include <glm/glm.hpp>
 #include <nvvk/appwindowprofiler_vk.hpp>
 #include <nvvk/commands_vk.hpp>
 #include <nvvk/descriptorsets_vk.hpp>

@@ -27,8 +27,7 @@
 
 #include <array>
 #include <nvh/geometry.hpp>
-#include <nvmath/nvmath.h>
-#include <nvmath/nvmath_glsltypes.h>
+#include <glm/glm.hpp>
 #include <nvvk/resourceallocator_vk.hpp>
 #include <nvvk/buffers_vk.hpp>
 #include <nvvk/context_vk.hpp>
@@ -40,9 +39,9 @@
 // Vertex structure used for the main mesh.
 struct Vertex
 {
-  nvmath::vec3 pos;
-  nvmath::vec3 normal;
-  nvmath::vec4 color;
+  glm::vec3 pos;
+  glm::vec3 normal;
+  glm::vec4 color;
 
   // Must have a constructor from nvh::geometry::Vertex in order for initScene
   // to work
@@ -53,7 +52,7 @@ struct Vertex
       pos[i]    = vertex.position[i];
       normal[i] = vertex.normal[i];
     }
-    color = nvmath::vec4(1.0f);
+    color = glm::vec4(1.0f);
   }
 
   static VkVertexInputBindingDescription getBindingDescription()

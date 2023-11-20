@@ -61,7 +61,7 @@
 #include <vector>
 
 #define IMGUI_DEFINE_MATH_OPERATORS
-#include <backends/imgui_vk_extra.h>
+#include <imgui/backends/imgui_vk_extra.h>
 #include <imgui/imgui_helper.h>
 
 #include <nvpwindow.hpp>
@@ -212,11 +212,11 @@ bool Sample::begin()
 
   // Initialize camera
   {
-    m_cameraControl.m_sceneOrbit     = nvmath::vec3(0.0f);
+    m_cameraControl.m_sceneOrbit     = glm::vec3(0.0f);
     m_cameraControl.m_sceneDimension = static_cast<float>(GRID_SIZE) * 0.25f;
     m_cameraControl.m_viewMatrix =
-        nvmath::look_at(m_cameraControl.m_sceneOrbit - (nvmath::vec3(0, 0, -0.6f) * m_cameraControl.m_sceneDimension * 5.0f),
-                        m_cameraControl.m_sceneOrbit, vec3(0.0f, 1.0f, 0.0f));
+        glm::lookAt(m_cameraControl.m_sceneOrbit - (glm::vec3(0, 0, -0.6f) * m_cameraControl.m_sceneDimension * 5.0f),
+                    m_cameraControl.m_sceneOrbit, vec3(0.0f, 1.0f, 0.0f));
   }
 
   // Initialize the UBO
@@ -440,15 +440,15 @@ void Sample::initScene(VkCommandBuffer commandBuffer)
   for(uint32_t i = 0; i < m_state.numObjects; i++)
   {
     // Generate a random position in [-GLOBAL_SCALE/2, GLOBAL_SCALE/2)^3
-    nvmath::vec3 center(uniformDist(rnd), uniformDist(rnd), uniformDist(rnd));
-    center = (center - nvmath::vec3(0.5)) * GLOBAL_SCALE;
+    glm::vec3 center(uniformDist(rnd), uniformDist(rnd), uniformDist(rnd));
+    center = (center - glm::vec3(0.5)) * GLOBAL_SCALE;
 
     // Generate a random radius
     float radius = GLOBAL_SCALE * 0.9f / GRID_SIZE;
     radius *= uniformDist(rnd) * m_state.scaleWidth + m_state.scaleMin;
 
     // Our vectors are vertical, so this represents a scale followed by a translation:
-    nvmath::mat4 matrix = nvmath::translation_mat4(center) * nvmath::scale_mat4(nvmath::vec3(radius));
+    glm::mat4 matrix = glm::translate(glm::mat4(1.f), center) * glm::scale(glm::mat4(1.f), glm::vec3(radius));
 
     // Add a sphere to the complete mesh, and then color it:
     const uint32_t vtxStart = completeMesh.getVerticesCount();  // First vertex to color
@@ -461,7 +461,7 @@ void Sample::initScene(VkCommandBuffer commandBuffer)
     }
 
     // Color in unpremultiplied linear space
-    nvmath::vec4 color(uniformDist(rnd), uniformDist(rnd), uniformDist(rnd), uniformDist(rnd));
+    glm::vec4 color(uniformDist(rnd), uniformDist(rnd), uniformDist(rnd), uniformDist(rnd));
     color.x *= color.x;
     color.y *= color.y;
     color.z *= color.z;
@@ -803,14 +803,15 @@ void Sample::updateUniformBuffer(uint32_t currentImage, double time)
   const uint32_t width       = m_colorImage.c_width;
   const uint32_t height      = m_colorImage.c_height;
   const float    aspectRatio = static_cast<float>(width) / static_cast<float>(height);
-  nvmath::mat4   projection  = nvmath::perspectiveVK(45.0f, aspectRatio, 0.01f, 50.0f);
-  nvmath::mat4   view        = m_cameraControl.m_viewMatrix;
+  glm::mat4      projection  = glm::perspectiveRH_ZO(glm::radians(45.0f), aspectRatio, 0.01f, 50.0f);
+  projection[1][1] *= -1;
+  glm::mat4 view = m_cameraControl.m_viewMatrix;
 
   m_sceneUbo.projViewMatrix             = projection * view;
   m_sceneUbo.viewMatrix                 = view;
-  m_sceneUbo.viewMatrixInverseTranspose = nvmath::transpose(nvmath::invert(view));
+  m_sceneUbo.viewMatrixInverseTranspose = glm::transpose(glm::inverse(view));
 
-  m_sceneUbo.viewport = nvmath::ivec3(width, height, width * height);
+  m_sceneUbo.viewport = glm::ivec3(width, height, width * height);
 
   void* data = m_allocatorDma.map(m_uniformBuffers[currentImage]);
   memcpy(data, &m_sceneUbo, sizeof(m_sceneUbo));
@@ -1058,8 +1059,8 @@ void Sample::think(double time)
   }
 
   // Update camera
-  m_cameraControl.processActions(nvmath::vec2i(getWidth(), getHeight()),
-                                 nvmath::vec2f(m_windowState.m_mouseCurrent[0], m_windowState.m_mouseCurrent[1]),
+  m_cameraControl.processActions(glm::ivec2(getWidth(), getHeight()),
+                                 glm::vec2(m_windowState.m_mouseCurrent[0], m_windowState.m_mouseCurrent[1]),
                                  m_windowState.m_mouseButtonFlags, m_windowState.m_mouseWheel);
 
   // Update the GPU's uniform buffer
