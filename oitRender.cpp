@@ -75,7 +75,7 @@ void Sample::render(VkCommandBuffer& cmdBuffer)
                               VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 
     // Set up the render pass
-    VkRenderPassBeginInfo renderPassInfo    = nvvk::make<VkRenderPassBeginInfo>();
+    VkRenderPassBeginInfo renderPassInfo    = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     renderPassInfo.renderPass               = m_renderPassColorDepthClear;
     renderPassInfo.framebuffer              = m_mainColorDepthFramebuffer;
     renderPassInfo.renderArea.offset        = {0, 0};
@@ -387,7 +387,7 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmdBuffer, int numObjects)
   m_colorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                             VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 
-  VkRenderPassBeginInfo renderPassInfo    = nvvk::make<VkRenderPassBeginInfo>();
+  VkRenderPassBeginInfo renderPassInfo    = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
   renderPassInfo.renderPass               = m_renderPassWeighted;
   renderPassInfo.framebuffer              = m_weightedFramebuffer;
   renderPassInfo.renderArea.offset        = {0, 0};

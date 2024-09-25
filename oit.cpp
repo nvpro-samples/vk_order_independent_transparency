@@ -444,7 +444,7 @@ void Sample::createGUIRenderPass()
   subpass.pDepthStencilAttachment = nullptr;
 
   // TODO: Should this have a dependency on external data?
-  VkRenderPassCreateInfo rpInfo = nvvk::make<VkRenderPassCreateInfo>();
+  VkRenderPassCreateInfo rpInfo = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
   rpInfo.attachmentCount        = 1;
   rpInfo.pAttachments           = &attachment;
   rpInfo.subpassCount           = 1;
@@ -527,7 +527,7 @@ void Sample::createNonGUIRenderPasses()
     selfDependency.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;  // Required, since we use framebuffer-space stages
 
     // No dependency on external data
-    VkRenderPassCreateInfo rpInfo = nvvk::make<VkRenderPassCreateInfo>();
+    VkRenderPassCreateInfo rpInfo = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     rpInfo.attachmentCount        = static_cast<uint32_t>(attachments.size());
     rpInfo.pAttachments           = attachments.data();
     rpInfo.subpassCount           = 1;
@@ -637,7 +637,7 @@ void Sample::createNonGUIRenderPasses()
     subpassDependencies[2].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
     // Finally create the render pass
-    VkRenderPassCreateInfo renderPassInfo = nvvk::make<VkRenderPassCreateInfo>();
+    VkRenderPassCreateInfo renderPassInfo = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
     renderPassInfo.attachmentCount        = static_cast<uint32_t>(allAttachments.size());
     renderPassInfo.pAttachments           = allAttachments.data();
     renderPassInfo.dependencyCount        = static_cast<uint32_t>(subpassDependencies.size());

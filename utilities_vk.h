@@ -33,7 +33,6 @@
 #include <nvvk/context_vk.hpp>
 #include <nvvk/debug_util_vk.hpp>
 #include <nvvk/images_vk.hpp>
-#include <nvvk/structs_vk.hpp>
 #include <vulkan/vulkan_core.h>
 
 // Vertex structure used for the main mesh.
@@ -152,7 +151,7 @@ inline nvvk::Image createImageSimple(nvvk::ResourceAllocatorDma& allocator,
   // There are several different ways to create images using the NVVK framework.
   // Here, we'll use AllocatorDma::createImage.
 
-  VkImageCreateInfo imageInfo = nvvk::make<VkImageCreateInfo>();
+  VkImageCreateInfo imageInfo = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   imageInfo.imageType         = imageType;
   imageInfo.extent.width      = width;
   imageInfo.extent.height     = height;
@@ -303,7 +302,7 @@ inline void cmdTransferBarrierSimple(VkCommandBuffer cmdBuffer)
   const VkPipelineStageFlags srcStageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
   const VkPipelineStageFlags dstStageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 
-  VkMemoryBarrier barrier = nvvk::make<VkMemoryBarrier>();
+  VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
   barrier.srcAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT;
   barrier.dstAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
@@ -324,7 +323,7 @@ inline void cmdFragmentBarrierSimple(VkCommandBuffer cmdBuffer)
 {
   const VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 
-  VkMemoryBarrier barrier = nvvk::make<VkMemoryBarrier>();
+  VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
   barrier.srcAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
   barrier.dstAccessMask   = barrier.srcAccessMask;
 

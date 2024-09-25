@@ -378,7 +378,7 @@ void Sample::destroyTextureSampler()
 void Sample::createTextureSampler()
 {
   // Create a point sampler using base Vulkan
-  VkSamplerCreateInfo samplerInfo     = nvvk::make<VkSamplerCreateInfo>();
+  VkSamplerCreateInfo samplerInfo     = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   samplerInfo.magFilter               = VK_FILTER_LINEAR;
   samplerInfo.minFilter               = VK_FILTER_LINEAR;
   samplerInfo.addressModeU            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -521,7 +521,7 @@ void Sample::createFramebuffers()
   // Color + depth offscreen framebuffer
   {
     std::array<VkImageView, 2> attachments = {m_colorImage.view, m_depthImage.view};
-    VkFramebufferCreateInfo    fbInfo      = nvvk::make<VkFramebufferCreateInfo>();
+    VkFramebufferCreateInfo    fbInfo      = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
     fbInfo.renderPass                      = m_renderPassColorDepthClear;
     fbInfo.attachmentCount                 = static_cast<uint32_t>(attachments.size());
     fbInfo.pAttachments                    = attachments.data();
@@ -543,7 +543,7 @@ void Sample::createFramebuffers()
                                               m_colorImage.view,              //
                                               m_depthImage.view};
 
-    VkFramebufferCreateInfo framebufferInfo = nvvk::make<VkFramebufferCreateInfo>();
+    VkFramebufferCreateInfo framebufferInfo = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
     framebufferInfo.renderPass              = m_renderPassWeighted;
     framebufferInfo.attachmentCount         = static_cast<uint32_t>(attachments.size());
     framebufferInfo.pAttachments            = attachments.data();
@@ -788,7 +788,7 @@ VkPipeline Sample::createGraphicsPipeline(const nvvk::ShaderModuleID& vertShader
 VkCommandBuffer Sample::createTempCmdBuffer()
 {
   VkCommandBuffer          cmd       = m_ringCmdPool.createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
-  VkCommandBufferBeginInfo beginInfo = nvvk::make<VkCommandBufferBeginInfo>();
+  VkCommandBufferBeginInfo beginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
   beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
   NVVK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
   return cmd;
@@ -943,7 +943,7 @@ void Sample::copyOffscreenToBackBuffer(int winWidth, int winHeight, ImDrawData* 
 
   if(imguiDrawData)
   {
-    VkRenderPassBeginInfo renderPassBeginInfo    = nvvk::make<VkRenderPassBeginInfo>();
+    VkRenderPassBeginInfo renderPassBeginInfo    = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     renderPassBeginInfo.renderPass               = m_renderPassGUI;
     renderPassBeginInfo.framebuffer              = m_guiFramebuffer;
     renderPassBeginInfo.renderArea.offset.x      = 0;
@@ -1094,6 +1094,8 @@ int main(int argc, const char** argv)
   NVPSystem system(PROJECT_NAME);
 
   Sample sample;
+  sample.m_contextInfo.apiMajor = 1;
+  sample.m_contextInfo.apiMinor = 2;
   sample.m_contextInfo.addDeviceExtension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
   sample.m_contextInfo.addDeviceExtension(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME);
   sample.m_contextInfo.addDeviceExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
@@ -1117,13 +1119,16 @@ int main(int argc, const char** argv)
       VK_FALSE  // fragmentShaderShadingRateInterlock (we don't need this)
   };
   sample.m_contextInfo.addDeviceExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, true, &m_fragmentShaderInterlockFeatures);
-  VkPhysicalDeviceShaderAtomicInt64Features m_shaderAtomicInt64Features{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES,  // sType
-      nullptr,                                                         // pNext
-      VK_TRUE,                                                         // shaderBufferInt64Atomics
-      VK_FALSE                                                         // shaderSharedInt64Atomics (we don't need this)
-  };
-  sample.m_contextInfo.addDeviceExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, true, &m_shaderAtomicInt64Features);
+
+  // we don't need this with version 1.2 vulkan anymore
+  
+  // VkPhysicalDeviceShaderAtomicInt64Features m_shaderAtomicInt64Features{
+  //     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES,  // sType
+  //     nullptr,                                                         // pNext
+  //     VK_TRUE,                                                         // shaderBufferInt64Atomics
+  //     VK_FALSE                                                         // shaderSharedInt64Atomics (we don't need this)
+  // };
+  // sample.m_contextInfo.addDeviceExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, true, &m_shaderAtomicInt64Features);
 
   const int SAMPLE_WIDTH  = 1200;
   const int SAMPLE_HEIGHT = 1024;
