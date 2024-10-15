@@ -141,7 +141,7 @@ bool Sample::begin()
   // Initialize Dear ImGui's Vulkan renderer:
   m_debug.setup(m_context);
   createGUIRenderPass();
-  ImGui::InitVK(m_context, m_context.m_physicalDevice, m_context.m_queueGCT, m_context.m_queueGCT.familyIndex, m_renderPassGUI, 0);
+  ImGui::InitVK(m_context, m_context.m_physicalDevice, m_context.m_queueGCT, m_context.m_queueGCT.familyIndex, m_renderPassGUI);
 
   // Initialize all Vulkan components that will be constant throughout the application lifecycle.
   // Components that can change are handled by updateRendererFromState.
