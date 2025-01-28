@@ -1109,8 +1109,8 @@ int main(int argc, const char** argv)
   };
   sample.m_contextInfo.addDeviceExtension(VK_KHR_MAINTENANCE_4_EXTENSION_NAME, false, &m_maintenance4Features);
 
-  // The extensions below are optional - there are algorithms we can use if we have them, but
-  // if the device doesn't support these extensions, we don't allow the user to select those algorithms.
+  // The extension below is optional - there are algorithms we can use if we have it, but
+  // if the device doesn't support it, we don't allow the user to select those algorithms.
   VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT m_fragmentShaderInterlockFeatures{
       VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT,  // sType
       nullptr,                                                                   // pNext
@@ -1119,16 +1119,6 @@ int main(int argc, const char** argv)
       VK_FALSE  // fragmentShaderShadingRateInterlock (we don't need this)
   };
   sample.m_contextInfo.addDeviceExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, true, &m_fragmentShaderInterlockFeatures);
-
-  // we don't need this with version 1.2 vulkan anymore
-  
-  // VkPhysicalDeviceShaderAtomicInt64Features m_shaderAtomicInt64Features{
-  //     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES,  // sType
-  //     nullptr,                                                         // pNext
-  //     VK_TRUE,                                                         // shaderBufferInt64Atomics
-  //     VK_FALSE                                                         // shaderSharedInt64Atomics (we don't need this)
-  // };
-  // sample.m_contextInfo.addDeviceExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME, true, &m_shaderAtomicInt64Features);
 
   const int SAMPLE_WIDTH  = 1200;
   const int SAMPLE_HEIGHT = 1024;
