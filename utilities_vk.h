@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2020-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2020-2021 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2025 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,15 +25,24 @@
 // binding description and attribute description for the geometry that this
 // sample specifically uses.
 
-#include <array>
-#include <nvh/geometry.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/hash_operations.hpp>
+#include <nvutils/primitives.hpp>
+#include <nvvk/barriers.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/resource_allocator.hpp>
+#include <nvvk/resources.hpp>
+#include <nvvkglsl/glsl.hpp>
+
 #include <glm/glm.hpp>
-#include <nvvk/resourceallocator_vk.hpp>
-#include <nvvk/buffers_vk.hpp>
-#include <nvvk/context_vk.hpp>
-#include <nvvk/debug_util_vk.hpp>
-#include <nvvk/images_vk.hpp>
 #include <vulkan/vulkan_core.h>
+
+#include <array>
+#include <filesystem>
+#include <string>
+#include <tuple>
+#include <vector>
 
 // Vertex structure used for the main mesh.
 struct Vertex
@@ -44,14 +53,11 @@ struct Vertex
 
   // Must have a constructor from nvh::geometry::Vertex in order for initScene
   // to work
-  Vertex(const nvh::geometry::Vertex& vertex)
+  Vertex(const nvutils::PrimitiveVertex& vertex)
   {
-    for(int i = 0; i < 3; i++)
-    {
-      pos[i]    = vertex.position[i];
-      normal[i] = vertex.normal[i];
-    }
-    color = glm::vec4(1.0f);
+    pos    = vertex.pos;
+    normal = vertex.nrm;
+    color  = glm::vec4(1.0f);
   }
 
   static VkVertexInputBindingDescription getBindingDescription()
@@ -68,20 +74,14 @@ struct Vertex
   {
     std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions = {};
 
-    attributeDescriptions[0].binding  = 0;
-    attributeDescriptions[0].location = 0;
-    attributeDescriptions[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[0].offset   = offsetof(Vertex, pos);
+    attributeDescriptions[0] = VkVertexInputAttributeDescription{
+        .location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(Vertex, pos)};
 
-    attributeDescriptions[1].binding  = 0;
-    attributeDescriptions[1].location = 1;
-    attributeDescriptions[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[1].offset   = offsetof(Vertex, normal);
+    attributeDescriptions[1] = VkVertexInputAttributeDescription{
+        .location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(Vertex, normal)};
 
-    attributeDescriptions[2].binding  = 0;
-    attributeDescriptions[2].location = 2;
-    attributeDescriptions[2].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
-    attributeDescriptions[2].offset   = offsetof(Vertex, color);
+    attributeDescriptions[2] = VkVertexInputAttributeDescription{
+        .location = 2, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = offsetof(Vertex, color)};
 
     return attributeDescriptions;
   }
@@ -93,34 +93,38 @@ struct Vertex
 struct BufferAndView
 {
   nvvk::Buffer buffer;
-  VkBufferView    view = nullptr;
-  VkDeviceSize    size = 0;  // In bytes
+  VkBufferView view = VK_NULL_HANDLE;
+  VkDeviceSize size = 0;  // In bytes
 
   // Creates a buffer and view with the given size, usage, and view format.
   // The memory properties are always VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT.
-  void create(nvvk::Context& context, nvvk::ResourceAllocatorDma& allocator, VkDeviceSize bufferSize, VkBufferUsageFlags bufferUsage, VkFormat viewFormat)
+  void init(VkDevice device, nvvk::ResourceAllocator& allocator, VkDeviceSize bufferSize, VkBufferUsageFlags bufferUsage, VkFormat viewFormat)
   {
-    assert(buffer.buffer == nullptr);  // Destroy the buffer before recreating it, please!
-    buffer = allocator.createBuffer(bufferSize, bufferUsage);
+    assert(buffer.buffer == VK_NULL_HANDLE);  // Destroy the buffer before recreating it, please!
+    NVVK_CHECK(allocator.createBuffer(buffer, bufferSize, bufferUsage));
     if((bufferUsage & (VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT)) != 0)
     {
-      view = nvvk::createBufferView(context, nvvk::makeBufferViewCreateInfo(buffer.buffer, viewFormat, bufferSize));
+      VkBufferViewCreateInfo info{.sType  = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,  //
+                                  .buffer = buffer.buffer,                              //
+                                  .format = viewFormat,                                 //
+                                  .range  = bufferSize};
+      NVVK_CHECK(vkCreateBufferView(device, &info, nullptr, &view));
     }
     size = bufferSize;
   }
 
   // To destroy the object, provide its context and allocator.
-  void destroy(nvvk::Context& context, nvvk::ResourceAllocatorDma& allocator)
+  void deinit(VkDevice device, nvvk::ResourceAllocator& allocator)
   {
-    if(buffer.buffer != nullptr)
+    if(view != VK_NULL_HANDLE)
     {
-      allocator.destroy(buffer);
+      vkDestroyBufferView(device, view, nullptr);
+      view = VK_NULL_HANDLE;
     }
 
-    if(view != nullptr)
+    if(buffer.buffer != VK_NULL_HANDLE)
     {
-      vkDestroyBufferView(context.m_device, view, nullptr);
-      view = nullptr;
+      allocator.destroyBuffer(buffer);
     }
 
     size = 0;
@@ -129,67 +133,12 @@ struct BufferAndView
   void setName(nvvk::DebugUtil& util, const char* name)
   {
     util.setObjectName(buffer.buffer, name);
-    if(view != nullptr)
+    if(view != VK_NULL_HANDLE)
     {
       util.setObjectName(view, name);
     }
   }
 };
-
-// Creates a simple texture with 1 mip, 1 array layer, 1 sample per texel, with
-// optimal tiling, in an undefined layout, with the VK_IMAGE_USAGE_SAMPLED_BIT flag
-// (and possibly additional flags), and accessible only from a single queue family.
-inline nvvk::Image createImageSimple(nvvk::ResourceAllocatorDma& allocator,
-                                        VkImageType         imageType,
-                                        VkFormat            format,
-                                        uint32_t            width,
-                                        uint32_t            height,
-                                        uint32_t            arrayLayers          = 1,
-                                        VkImageUsageFlags   additionalUsageFlags = 0,
-                                        uint32_t            numSamples           = 1)
-{
-  // There are several different ways to create images using the NVVK framework.
-  // Here, we'll use AllocatorDma::createImage.
-
-  VkImageCreateInfo imageInfo = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-  imageInfo.imageType         = imageType;
-  imageInfo.extent.width      = width;
-  imageInfo.extent.height     = height;
-  imageInfo.extent.depth      = 1;
-  imageInfo.mipLevels         = 1;
-  imageInfo.arrayLayers       = arrayLayers;
-  imageInfo.format            = format;
-  imageInfo.tiling            = VK_IMAGE_TILING_OPTIMAL;
-  imageInfo.initialLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
-  imageInfo.usage             = VK_IMAGE_USAGE_SAMPLED_BIT | additionalUsageFlags;
-  imageInfo.samples           = static_cast<VkSampleCountFlagBits>(numSamples);
-  imageInfo.sharingMode       = VK_SHARING_MODE_EXCLUSIVE;
-
-  return allocator.createImage(imageInfo);
-}
-
-inline VkSampleCountFlagBits getSampleCountFlagBits(int msaa)
-{
-  return static_cast<VkSampleCountFlagBits>(msaa);
-}
-
-// A simple wrapper for writing a vkCmdPipelineBarrier for doing things such as
-// image layout transitions.
-inline void cmdImageTransition(VkCommandBuffer    cmd,
-                               VkImage            img,
-                               VkImageAspectFlags aspects,
-                               VkAccessFlags      src,
-                               VkAccessFlags      dst,
-                               VkImageLayout      oldLayout,
-                               VkImageLayout      newLayout)
-{
-
-  VkPipelineStageFlags srcPipe = nvvk::makeAccessMaskPipelineStageFlags(src);
-  VkPipelineStageFlags dstPipe = nvvk::makeAccessMaskPipelineStageFlags(dst);
-  VkImageMemoryBarrier barrier = nvvk::makeImageMemoryBarrier(img, src, dst, oldLayout, newLayout, aspects);
-
-  vkCmdPipelineBarrier(cmd, srcPipe, dstPipe, VK_FALSE, 0, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, 1, &barrier);
-}
 
 // An ImageAndView is an NVVK image (i.e. Vulkan image and underlying memory),
 // together with a view that points to the whole image, and data to track its
@@ -197,96 +146,97 @@ inline void cmdImageTransition(VkCommandBuffer    cmd,
 struct ImageAndView
 {
   nvvk::Image image;
-  VkImageView    view = nullptr;
-  // Information you might need, but please don't modify
-  uint32_t c_width  = 0;                    // Should not be changed once the texture is created!
-  uint32_t c_height = 0;                    // Should not be changed once the texture is created!
-  uint32_t c_layers = 0;                    // Should not be changed once the texture is created!
-  VkFormat c_format = VK_FORMAT_UNDEFINED;  // Should not be changed once the texture is created!
-
-  // Information for pipeline transitions. These should generally only be
-  // modified via transitionTo or when ending render passes.
-  VkImageLayout currentLayout = VK_IMAGE_LAYOUT_UNDEFINED;  // The current layout of the image in GPU memory (e.g. GENERAL or COLOR_ATTACHMENT_OPTIMAL)
-  VkAccessFlags currentAccesses = 0;  // How the memory of this texture can be accessed (e.g. shader read/write, color attachment read/write)
 
 public:
   // Creates a simple texture and view with 1 mip and 1 array layer.
   // with optimal tiling, in an undefined layout, with the VK_IMAGE_USAGE_SAMPLED_BIT flag
   // (and possibly additional flags), and accessible only from a single queue family.
-  void create(nvvk::Context&      context,
-              nvvk::ResourceAllocatorDma& allocator,
-              VkImageType         imageType,
-              VkImageAspectFlags  viewAspect,
-              VkFormat            format,
-              uint32_t            width,
-              uint32_t            height,
-              uint32_t            arrayLayers          = 1,
-              VkImageUsageFlags   additionalUsageFlags = 0,
-              uint32_t            numSamples           = 1)
+  void init(VkDevice                 device,
+            nvvk::ResourceAllocator& allocator,
+            VkImageType              imageType,
+            VkImageAspectFlags       viewAspect,
+            VkFormat                 format,
+            uint32_t                 width,
+            uint32_t                 height,
+            uint32_t                 arrayLayers          = 1,
+            VkImageUsageFlags        additionalUsageFlags = 0,
+            uint32_t                 numSamples           = 1)
   {
-    assert(view == nullptr);  // Destroy the image before recreating it, please!
-    image = createImageSimple(allocator, imageType, format, width, height, arrayLayers, additionalUsageFlags, numSamples);
-    VkImageViewCreateInfo viewInfo       = nvvk::makeImage2DViewCreateInfo(image.image, format, viewAspect);
-    viewInfo.subresourceRange.layerCount = arrayLayers;
-    viewInfo.viewType                    = (arrayLayers == 1 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_2D_ARRAY);
-    vkCreateImageView(context.m_device, &viewInfo, nullptr, &view);
+    assert(image.image == VK_NULL_HANDLE);  // Destroy the image before recreating it, please!
 
-    c_width  = width;
-    c_height = height;
-    c_layers = arrayLayers;
-    c_format = format;
+
+    VkImageCreateInfo imageInfo = {.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                   .imageType     = imageType,
+                                   .format        = format,
+                                   .extent        = VkExtent3D{.width = width, .height = height, .depth = 1},
+                                   .mipLevels     = 1,
+                                   .arrayLayers   = arrayLayers,
+                                   .samples       = static_cast<VkSampleCountFlagBits>(numSamples),
+                                   .tiling        = VK_IMAGE_TILING_OPTIMAL,
+                                   .usage         = VK_IMAGE_USAGE_SAMPLED_BIT | additionalUsageFlags,
+                                   .sharingMode   = VK_SHARING_MODE_EXCLUSIVE,
+                                   .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+
+    VkImageViewCreateInfo viewInfo{.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                   .viewType = (arrayLayers == 1 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_2D_ARRAY),
+                                   .format   = format,
+                                   .subresourceRange = {.aspectMask = viewAspect, .levelCount = 1, .layerCount = arrayLayers}};
+
+    NVVK_CHECK(allocator.createImage(image, imageInfo, viewInfo));
   }
+
+  uint32_t      getWidth() const { return image.extent.width; }
+  uint32_t      getHeight() const { return image.extent.height; }
+  uint32_t      getLayers() const { return image.arrayLayers; }
+  VkImageLayout getLayout() const { return image.descriptor.imageLayout; }
+  VkFormat      getFormat() const { return image.format; }
+  VkImageView   getView() const { return image.descriptor.imageView; }
 
   // To destroy the object, provide its context and allocator.
-  void destroy(nvvk::Context& context, nvvk::ResourceAllocatorDma& allocator)
-  {
-    if(view != nullptr)
-    {
-      vkDestroyImageView(context.m_device, view, nullptr);
-      allocator.destroy(image);
-      view            = nullptr;
-      currentLayout   = VK_IMAGE_LAYOUT_UNDEFINED;
-      currentAccesses = 0;
-    }
-  }
+  void deinit(VkDevice device, nvvk::ResourceAllocator& allocator) { allocator.destroyImage(image); }
 
   void transitionTo(VkCommandBuffer cmdBuffer,
-                    VkImageLayout   dstLayout,  // How the image will be laid out in memory.
-                    VkAccessFlags   dstAccesses)  // The ways that the app will be able to access the image.
+                    VkImageLayout   dstLayout)  // How the image will be laid out in memory.
   {
     // Note that in larger applications, we could batch together pipeline
     // barriers for better performance!
 
-    // Maps to barrier.subresourceRange.aspectMask
-    VkImageAspectFlags aspectMask = 0;
-    if(dstLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+    // We always want to transition the whole image. Choose aspectMask based
+    // on the image format:
+    VkImageAspectFlags aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    if(VK_FORMAT_D32_SFLOAT_S8_UINT == image.format || VK_FORMAT_D24_UNORM_S8_UINT == image.format)
+    {
+      aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+    }
+    else if(VK_FORMAT_D32_SFLOAT == image.format)
     {
       aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-      if(c_format == VK_FORMAT_D32_SFLOAT_S8_UINT || c_format == VK_FORMAT_D24_UNORM_S8_UINT)
-      {
-        aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
-      }
-    }
-    else
-    {
-      aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     }
 
-    cmdImageTransition(cmdBuffer, image.image, aspectMask, currentAccesses, dstAccesses, currentLayout, dstLayout);
+    const nvvk::ImageMemoryBarrierParams params{.image            = image.image,
+                                                .oldLayout        = image.descriptor.imageLayout,
+                                                .newLayout        = dstLayout,
+                                                .subresourceRange = VkImageSubresourceRange{
+                                                    .aspectMask     = aspectMask,
+                                                    .baseMipLevel   = 0,
+                                                    .levelCount     = VK_REMAINING_MIP_LEVELS,
+                                                    .baseArrayLayer = 0,
+                                                    .layerCount     = VK_REMAINING_ARRAY_LAYERS,
+                                                }};
+    nvvk::cmdImageMemoryBarrier(cmdBuffer, params);
 
-    // Update current layout, stages, and accesses
-    currentLayout   = dstLayout;
-    currentAccesses = dstAccesses;
+    // Update current layout
+    image.descriptor.imageLayout = dstLayout;
   }
 
   // Should be called to keep track of the image's current layout when a render
   // pass that includes a image layout transition finishes.
-  void endRenderPass(VkImageLayout dstLayout) { currentLayout = dstLayout; }
+  void endRenderPass(VkImageLayout dstLayout) { image.descriptor.imageLayout = dstLayout; }
 
   void setName(nvvk::DebugUtil& util, const char* name)
   {
     util.setObjectName(image.image, name);
-    util.setObjectName(view, name);
+    util.setObjectName(image.descriptor.imageView, name);
   }
 };
 
@@ -295,40 +245,166 @@ public:
 // Note that on NV hardware, unless you need a layout transition, there's little benefit to using
 // memory barriers for each of the individual objects (and in fact may run into issues with the
 // Vulkan specification).
-// The dependency flags are BY_REGION_BIT by default, since most calls to cmdBarrier come from
+// The dependency flags are BY_REGION_BIT by default, since most calls to this function come from
 // dependencies inside render passes, which require this (according to section 6.6.1).
 inline void cmdTransferBarrierSimple(VkCommandBuffer cmdBuffer)
 {
-  const VkPipelineStageFlags srcStageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT;
-  const VkPipelineStageFlags dstStageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  const VkMemoryBarrier2 barrier{
+      .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+      .srcStageMask  = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+      .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+      .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+      .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT,
+  };
 
-  VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-  barrier.srcAccessMask   = VK_ACCESS_TRANSFER_WRITE_BIT;
-  barrier.dstAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+  const VkDependencyInfo dependency{.sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                    .dependencyFlags    = VK_DEPENDENCY_BY_REGION_BIT,
+                                    .memoryBarrierCount = 1,
+                                    .pMemoryBarriers    = &barrier};
 
-  vkCmdPipelineBarrier(cmdBuffer, srcStageFlags, dstStageFlags, VK_DEPENDENCY_BY_REGION_BIT,  //
-                       1, &barrier,                                                           //
-                       0, VK_NULL_HANDLE,                                                     //
-                       0, VK_NULL_HANDLE);
+  vkCmdPipelineBarrier2(cmdBuffer, &dependency);
 }
 
-// Adds a simple command that ensures that all fragment shader reads writes have finished before all
+// Adds a simple command that ensures that all fragment shader reads and writes have finished before all
 // subsequent fragment shader reads and writes (in the current scope).
 // Note that on NV hardware, unless you need a layout transition, there's little benefit to using
 // memory barriers for each of the individual objects (and in fact may run into issues with the
 // Vulkan specification).
-// The dependency flags are BY_REGION_BIT by default, since most calls to cmdBarrier come from
+// The dependency flags are BY_REGION_BIT by default, since most calls to this function come from
 // dependencies inside render passes, which require this (according to section 6.6.1).
 inline void cmdFragmentBarrierSimple(VkCommandBuffer cmdBuffer)
 {
-  const VkPipelineStageFlags stageFlags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  const VkMemoryBarrier2 barrier{
+      .sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+      .srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      .srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+      .dstStageMask  = barrier.srcStageMask,
+      .dstAccessMask = barrier.srcAccessMask,
+  };
 
-  VkMemoryBarrier barrier = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-  barrier.srcAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-  barrier.dstAccessMask   = barrier.srcAccessMask;
+  const VkDependencyInfo dependency{.sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                    .dependencyFlags    = VK_DEPENDENCY_BY_REGION_BIT,
+                                    .memoryBarrierCount = 1,
+                                    .pMemoryBarriers    = &barrier};
 
-  vkCmdPipelineBarrier(cmdBuffer, stageFlags, stageFlags, VK_DEPENDENCY_BY_REGION_BIT,  //
-                       1, &barrier,                                  //
-                       0, VK_NULL_HANDLE,                            //
-                       0, VK_NULL_HANDLE);
+  vkCmdPipelineBarrier2(cmdBuffer, &dependency);
 }
+
+//-----------------------------------------------------------------------------
+// CachingShaderCompiler
+
+// TODO: Move this to a .cpp file; it's expensive!
+
+using CompileDefines = std::vector<std::pair<std::string, std::string>>;
+
+struct CompileInput
+{
+  shaderc_shader_kind   shader_kind;
+  std::filesystem::path filename;
+  CompileDefines        defines;
+};
+
+inline bool operator==(const CompileInput& lhs, const CompileInput& rhs)
+{
+  return (lhs.shader_kind == rhs.shader_kind) && (lhs.filename == rhs.filename) && (lhs.defines == rhs.defines);
+}
+
+// Hash function for CompileInput
+template <>
+struct std::hash<CompileInput>
+{
+  std::size_t operator()(const CompileInput& s) const noexcept
+  {
+    std::size_t hash = 0;
+    // Since std::hash<std::filesystem::path> doesn't yet exist in VS 2019,
+    // we use s.filename.native(), which can be hashed.
+    nvutils::hashCombine(hash, s.filename.native());
+    for(const auto& define : s.defines)
+    {
+      nvutils::hashCombine(hash, define.first, define.second);
+    }
+    nvutils::hashCombine(hash, s.shader_kind);
+    return hash;
+  }
+};
+
+struct ShaderCacheValue
+{
+  VkShaderModule                  module = VK_NULL_HANDLE;
+  std::filesystem::file_time_type modified_time;
+};
+
+// A wrapper around ShaderC that outputs VkShaderModules and caches its results.
+// It makes some simplifying assumptions around compilation settings.
+struct CachingShaderCompiler
+{
+public:
+  void addSearchPaths(const std::vector<std::filesystem::path>& paths) { m_compiler.addSearchPaths(paths); }
+
+  VkShaderModule compile(VkDevice device, const CompileInput& input)
+  {
+    // Queue up the file modification time query
+    const std::filesystem::path& absolutePath = nvutils::findFile(input.filename, m_compiler.searchPaths());
+    if(absolutePath.empty())
+    {
+      // File not found
+      return VK_NULL_HANDLE;
+    }
+
+    const std::filesystem::file_time_type modified_time = std::filesystem::last_write_time(absolutePath);
+
+    // Is this file in our cache?
+    const auto& it = m_cache.find(input);
+    if(m_cache.end() != it)
+    {
+      // If the file hasn't been modified since then, we can use it directly.
+      if(it->second.modified_time >= modified_time)
+      {
+        return it->second.module;
+      }
+    }
+
+    // Missing or out-of-date from the cache. Compile it anew:
+    ShaderCacheValue result{.modified_time = modified_time};
+
+    {
+      m_compiler.clearOptions();
+      shaderc::CompileOptions& options = m_compiler.options();
+      options.SetGenerateDebugInfo();
+      for(const auto& define : input.defines)
+      {
+        options.AddMacroDefinition(define.first, define.second);
+      }
+
+      const shaderc::SpvCompilationResult compileResult = m_compiler.compileFile(absolutePath, input.shader_kind);
+      const uint32_t*                     spirv         = m_compiler.getSpirv(compileResult);
+      if(spirv)
+      {
+        VkShaderModuleCreateInfo shaderInfo{.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                                            .codeSize = m_compiler.getSpirvSize(compileResult),
+                                            .pCode    = spirv};
+        NVVK_CHECK(vkCreateShaderModule(device, &shaderInfo, nullptr, &result.module));
+        nvvk::DebugUtil::getInstance().setObjectName(result.module, input.filename.string());
+      }
+    }
+
+    // Update the cache:
+    m_cache[input] = result;
+    return result.module;
+  }
+
+  void clear(VkDevice device)
+  {
+    for(const auto& kvp : m_cache)
+    {
+      vkDestroyShaderModule(device, kvp.second.module, nullptr);
+    }
+    m_cache.clear();
+  }
+
+  void deinit(VkDevice device) { clear(device); }
+
+private:
+  nvvkglsl::GlslCompiler                             m_compiler;
+  std::unordered_map<CompileInput, ShaderCacheValue> m_cache;
+};

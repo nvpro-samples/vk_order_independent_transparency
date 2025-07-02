@@ -1,95 +1,32 @@
-cmake_minimum_required(VERSION 3.5...3.31)
+cmake_minimum_required(VERSION 3.11...3.31)
+Project(vk_order_independent_transparency VERSION 2.0 LANGUAGES CXX)
 
-get_filename_component(PROJNAME ${CMAKE_CURRENT_SOURCE_DIR} NAME)
-Project(${PROJNAME})
-Message(STATUS "-------------------------------")
-Message(STATUS "Processing Project ${PROJNAME}:")
+# Add the cmake folder to the module path
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+find_package(NvproCore2 REQUIRED)
 
-#####################################################################################
-# look for nvpro_core 1) as a sub-folder 2) at some other locations
-# this cannot be put anywhere else since we still didn't find setup.cmake yet
-#
-if(NOT BASE_DIRECTORY)
-
-  find_path(BASE_DIRECTORY
-    NAMES nvpro_core/cmake/setup.cmake
-    PATHS ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../..
-    REQUIRED
-    DOC "Directory containing nvpro_core"
-    )
-endif()
-if(EXISTS ${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
-  include(${BASE_DIRECTORY}/nvpro_core/cmake/setup.cmake)
-else()
-  message(FATAL_ERROR "could not find base directory, please set BASE_DIRECTORY to folder containing nvpro_core")
-endif()
-
-_add_project_definitions(${PROJNAME})
-
-
-#####################################################################################
-# additions from packages needed for this sample
-# add refs  in LIBRARIES_OPTIMIZED
-# add refs  in LIBRARIES_DEBUG
-# add files in PACKAGE_SOURCE_FILES
-
-_add_package_VulkanSDK()
-_add_package_IMGUI()
-_add_package_ShaderC()
-
-#####################################################################################
-# process the rest of some cmake code that needs to be done *after* the packages add
-_add_nvpro_core_lib()
-
-#####################################################################################
 # Source files for this project
-#
 file(GLOB SOURCE_FILES *.cpp *.hpp *.inl *.h *.c)
-file(GLOB GLSL_FILES *.glsl)
-
-#####################################################################################
-# Executable
-#
-add_executable(${PROJNAME} ${SOURCE_FILES} ${COMMON_SOURCE_FILES} ${PACKAGE_SOURCE_FILES} ${GLSL_FILES})
-set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJNAME})
-
-#####################################################################################
-# common source code needed for this sample
-#
-source_group(common FILES 
-  ${COMMON_SOURCE_FILES}
-  ${PACKAGE_SOURCE_FILES}
-)
+file(GLOB GLSL_FILES shaders/*.*)
 source_group("Source Files" FILES ${SOURCE_FILES})
-# List GLSL files in our IDE (though we'll compile them at runtime instead of
-# at compile-time):
 source_group("GLSL Files" FILES ${GLSL_FILES})
 
-if(UNIX)
-  set(UNIXLINKLIBS dl pthread)
-else()
-  set(UNIXLINKLIBS)
-endif()
+add_executable(${PROJECT_NAME} ${SOURCE_FILES} ${GLSL_FILES})
+set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 
-#####################################################################################
-# Linkage
-#
-target_link_libraries(${PROJNAME} ${PLATFORM_LIBRARIES} nvpro_core)
+# Link with nvpro_core2 libraries we need
+target_link_libraries(${PROJECT_NAME} PRIVATE
+  nvpro2::nvapp
+  nvpro2::nvgui
+  nvpro2::nvutils
+  nvpro2::nvvk
+  nvpro2::nvvkglsl
+)
 
-foreach(DEBUGLIB ${LIBRARIES_DEBUG})
-  target_link_libraries(${PROJNAME} debug ${DEBUGLIB})
-endforeach(DEBUGLIB)
+add_project_definitions(${PROJECT_NAME})
 
-foreach(RELEASELIB ${LIBRARIES_OPTIMIZED})
-  target_link_libraries(${PROJNAME} optimized ${RELEASELIB})
-endforeach(RELEASELIB)
-
-#####################################################################################
-# copies binaries that need to be put next to the exe files (ZLib, etc.)
-#
-
-_finalize_target( ${PROJNAME} )
-
-set(FILES_TO_INSTALL ${GLSL_FILES} "${CMAKE_CURRENT_SOURCE_DIR}/common.h")
-install(FILES ${FILES_TO_INSTALL} CONFIGURATIONS Release DESTINATION "bin_${ARCH}/GLSL_${PROJNAME}")
-install(FILES ${FILES_TO_INSTALL} CONFIGURATIONS Debug DESTINATION "bin_${ARCH}_debug/GLSL_${PROJNAME}")
+# Copy runtime dependencies to build and install directories
+copy_to_runtime_and_install(${PROJECT_NAME}
+  LOCAL_DIRS "${CMAKE_CURRENT_LIST_DIR}/shaders"
+  AUTO
+)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2020-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2025 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,221 +35,104 @@
 
 #pragma warning(disable : 26812)  // Disable the warning about Vulkan's enumerations being untyped in VS2019.
 
-#if defined(_WIN32)
-// Include Windows before GLFW3 to fix some errors with std::min and std::max
-#define WIN32_LEAN_AND_MEAN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif  // #ifndef NOMINMAX
-#include <Windows.h>
-#endif
-
-#ifndef GLFW_INCLUDE_VULKAN
-#define GLFW_INCLUDE_VULKAN
-#endif
-#include <GLFW/glfw3.h>
-
-#include <algorithm>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <fstream>
-#include <iostream>
-#include <random>
-#include <set>
-#include <stdexcept>
-#include <vector>
-
-#define IMGUI_DEFINE_MATH_OPERATORS
-#include <imgui/backends/imgui_vk_extra.h>
-#include <imgui/imgui_helper.h>
-
-#include <nvpwindow.hpp>
-
-#include <nvh/cameracontrol.hpp>
-#include <nvh/fileoperations.hpp>
-#include <nvh/misc.hpp>
-#include <nvh/nvprint.hpp>
-#include <nvh/timesampler.hpp>
-
-#include <nvvk/commands_vk.hpp>
-#include <nvvk/descriptorsets_vk.hpp>
-#include <nvvk/error_vk.hpp>
-#include <nvvk/extensions_vk.hpp>
-#include <nvvk/images_vk.hpp>
-#include <nvvk/memorymanagement_vk.hpp>
-#include <nvvk/pipeline_vk.hpp>
-#include <nvvk/profiler_vk.hpp>
-#include <nvvk/shadermodulemanager_vk.hpp>
-#include <nvvk/shaders_vk.hpp>
-#include <nvvk/swapchain_vk.hpp>
+#define VMA_IMPLEMENTATION
 
 #include "oit.h"
 
+#include <nvapp/elem_default_title.hpp>
+#include <nvutils/file_operations.hpp>
+#include <nvutils/logger.hpp>
+#include <nvvk/context.hpp>
+#include <nvvk/staging.hpp>
+
+#include <cassert>
+#include <random>
+
 // Application constants
-const int   GRID_SIZE    = 16;
-const float GLOBAL_SCALE = 8.0f;
+constexpr int   GRID_SIZE    = 16;
+constexpr float GLOBAL_SCALE = 8.0f;
+
+// TODO: Rename section headers
 
 ///////////////////////////////////////////////////////////////////////////////
 // Callbacks                                                                 //
 ///////////////////////////////////////////////////////////////////////////////
 
-void Sample::resize(int width, int height)
+void Sample::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
 {
-  assert(width == m_windowState.m_swapSize[0]);
-  assert(height == m_windowState.m_swapSize[1]);
-  updateRendererImmediate(true, false);
-}
-
-bool Sample::mouse_pos(int x, int y)
-{
-  return ImGuiH::mouse_pos(x, y);
-}
-
-bool Sample::mouse_button(int button, int action)
-{
-  return ImGuiH::mouse_button(button, action);
-}
-
-bool Sample::mouse_wheel(int wheel)
-{
-  return ImGuiH::mouse_wheel(wheel);
-}
-
-bool Sample::key_char(int key)
-{
-  return ImGuiH::key_char(key);
-}
-
-bool Sample::key_button(int button, int action, int mods)
-{
-  return ImGuiH::key_button(button, action, mods);
+  updateRendererFromState(true, false);
+  // This is here because it happens before ImGui.
+  m_viewportImage.update(cmd, size);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Object Creation, Destruction, and Recreation                              //
 ///////////////////////////////////////////////////////////////////////////////
 
-bool Sample::begin()
+void Sample::onAttach(nvapp::Application* app)
 {
-  m_profilerPrint = true;
-  m_timeInTitle   = true;
+  m_app = app;
 
-  // Initialize Dear ImGui (we'll call InitVK later)
-  ImGuiH::Init(m_windowState.m_winSize[0], m_windowState.m_winSize[1], this);
-  ImGui::GetIO().IniFilename = nullptr;  // Don't create a .ini file for storing data across application launches
-  // Initialize Dear ImGui's Vulkan renderer:
-  m_debug.setup(m_context);
-  createGUIRenderPass();
-  ImGui::InitVK(m_context, m_context.m_physicalDevice, m_context.m_queueGCT, m_context.m_queueGCT.familyIndex, m_renderPassGUI);
+  // Camera
+  m_cameraControl = std::make_shared<nvutils::CameraManipulator>();
+  m_cameraElement = std::make_shared<nvapp::ElementCamera>();
+  m_cameraElement->setCameraManipulator(m_cameraControl);
+  m_app->addElement(m_cameraElement);
 
-  // Initialize all Vulkan components that will be constant throughout the application lifecycle.
-  // Components that can change are handled by updateRendererFromState.
-  m_ringFences.init(m_context);
-  m_ringCmdPool.init(m_context, m_context.m_queueGCT.familyIndex, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT);
-  m_submission.init(m_context.m_queueGCT.queue);
+  // Profiler
+  m_profilerTimeline = m_profiler.createTimeline({.name = "Primary"});
+  m_profilerGPU.init(m_profilerTimeline, m_ctx->getDevice(), m_ctx->getPhysicalDevice(), m_app->getQueue(0).familyIndex, true);
+  m_profilerGUI =
+      std::make_shared<nvapp::ElementProfiler>(&m_profiler, std::make_shared<nvapp::ElementProfiler::ViewSettings>());
+  m_app->addElement(m_profilerGUI);
 
+  // Debug utility
+  nvvk::DebugUtil::getInstance().init(m_ctx->getDevice());
+
+  // Allocator
+  m_allocator.init(VmaAllocatorCreateInfo{
+      .physicalDevice = m_ctx->getPhysicalDevice(), .device = m_ctx->getDevice(), .instance = m_ctx->getInstance()});
+
+  // Point sampler
   createTextureSampler();
 
-  m_allocatorDma.init(m_context.m_device, m_context.m_physicalDevice);
-  // Configure shader system (note that this also creates shader modules as we add them)
+  // Viewport image parameters - 1spp, swapchain sized, with almost the same format as the swapchain
+  // (with the exception that the channels have to be in the same order as m_colorImage)
+  m_viewportImage.init(nvvk::GBufferInitInfo{.allocator      = &m_allocator,
+                                             .colorFormats   = {m_viewportColorFormat},
+                                             .imageSampler   = m_pointSampler,
+                                             .descriptorPool = m_app->getTextureDescriptorPool()});
+
+  // Configure shader system
   {
-    // Initialize shader system (this keeps track of shaders so that you can reload all of them at once):
-    m_shaderModuleManager.init(m_context);
-    // Add search paths for files and includes
-    m_shaderModuleManager.addDirectory("GLSL_" PROJECT_NAME);  // For when running in the install directory
-    m_shaderModuleManager.addDirectory(".");
-    m_shaderModuleManager.addDirectory(NVPSystem::exePath() + PROJECT_RELDIRECTORY);
-    m_shaderModuleManager.addDirectory(NVPSystem::exePath() + PROJECT_RELDIRECTORY + "..");
-    m_shaderModuleManager.addDirectory("..");     // for when working directory in Debug is $(ProjectDir)
-    m_shaderModuleManager.addDirectory("../..");  // for when using $(TargetDir)
-    m_shaderModuleManager.addDirectory("../shipped/" PROJECT_NAME);  // For when running from the bin_x64 directory on Linux
-    m_shaderModuleManager.addDirectory("../../shipped/" PROJECT_NAME);     // for when using $(TargetDir)
-    m_shaderModuleManager.addDirectory("../../../shipped/" PROJECT_NAME);  // for when using $(TargetDir) and build_all
-    // We have to manually set up paths to files we could include.
-    m_shaderModuleManager.registerInclude("common.h");
-    m_shaderModuleManager.registerInclude("oitColorDepthDefines.glsl");
-    m_shaderModuleManager.registerInclude("oitCompositeDefines.glsl");
-    m_shaderModuleManager.registerInclude("shaderCommon.glsl");
+    // TODO: Add more paths
+    m_shaderCompiler.addSearchPaths({std::filesystem::path("shaders"),     //
+                                     std::filesystem::path("../shaders"),  //
+                                     std::filesystem::path(PROJECT_EXE_TO_SOURCE_DIRECTORY) / "shaders"});
   }
 
-  // Call updateRendererImmediate to set up the rest of the renderer with the initial swapchain size:
-  {
-    updateRendererImmediate(true, true);
-  }
-
-  // Register enumerations with the Dear ImGui registry
-  {
-    m_imGuiRegistry.enumAdd(GUI_ALGORITHM, OIT_SIMPLE, "simple");
-    m_imGuiRegistry.enumAdd(GUI_ALGORITHM, OIT_LINKEDLIST, "linkedlist");
-    m_imGuiRegistry.enumAdd(GUI_ALGORITHM, OIT_LOOP, "loop32 two pass");
-
-    if(m_context.hasDeviceExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME))
-    {
-      m_imGuiRegistry.enumAdd(GUI_ALGORITHM, OIT_LOOP64, "loop64");
-    }
-    m_imGuiRegistry.enumAdd(GUI_ALGORITHM, OIT_SPINLOCK, "spinlock");
-    if(m_context.hasDeviceExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME))
-    {
-      m_imGuiRegistry.enumAdd(GUI_ALGORITHM, OIT_INTERLOCK, "interlock");
-    }
-    m_imGuiRegistry.enumAdd(GUI_ALGORITHM, OIT_WEIGHTED, "weighted blend");
-
-    m_imGuiRegistry.enumAdd(GUI_OITSAMPLES, 1, "1");
-    m_imGuiRegistry.enumAdd(GUI_OITSAMPLES, 2, "2");
-    m_imGuiRegistry.enumAdd(GUI_OITSAMPLES, 4, "4");
-    m_imGuiRegistry.enumAdd(GUI_OITSAMPLES, 8, "8");
-    m_imGuiRegistry.enumAdd(GUI_OITSAMPLES, 16, "16");
-    m_imGuiRegistry.enumAdd(GUI_OITSAMPLES, 32, "32");
-
-    m_imGuiRegistry.enumAdd(GUI_AA, AA_NONE, "none");
-    m_imGuiRegistry.enumAdd(GUI_AA, AA_MSAA_4X, "msaa 4x pixel-shading");
-    m_imGuiRegistry.enumAdd(GUI_AA, AA_SSAA_4X, "msaa 4x sample-shading");
-    m_imGuiRegistry.enumAdd(GUI_AA, AA_SUPER_4X, "super 4x");
-    m_imGuiRegistry.enumAdd(GUI_AA, AA_MSAA_8X, "msaa 8x pixel-shading");
-    m_imGuiRegistry.enumAdd(GUI_AA, AA_SSAA_8X, "msaa 8x sample-shading");
-  }
+  // Call cmdUpdateRendererFromState with forceRebuildAll = true to set up the rest of the renderer with the initial
+  // swapchain size.
+  updateRendererFromState(true, true);
 
   // Initialize camera
-  {
-    m_cameraControl.m_sceneOrbit     = glm::vec3(0.0f);
-    m_cameraControl.m_sceneDimension = static_cast<float>(GRID_SIZE) * 0.25f;
-    m_cameraControl.m_viewMatrix =
-        glm::lookAt(m_cameraControl.m_sceneOrbit - (glm::vec3(0, 0, -0.6f) * m_cameraControl.m_sceneDimension * 5.0f),
-                    m_cameraControl.m_sceneOrbit, vec3(0.0f, 1.0f, 0.0f));
-  }
+  m_cameraControl->setLookat(glm::vec3(0, 0, 0.75f * static_cast<float>(GRID_SIZE)),  // eye
+                             glm::vec3(0.0f),                                         //center
+                             glm::vec3(0.0f, 1.0f, 0.0f));                            //up
 
   // Initialize the UBO
   m_sceneUbo.alphaMin   = 0.2f;
   m_sceneUbo.alphaWidth = 0.3f;
-
-  m_frame     = 0;
-  m_lastState = m_state;
-
-  return true;  // Initialization succeeded
 }
 
-void Sample::updateRendererImmediate(bool swapchainSizeChanged, bool forceRebuildAll)
-{
-  VkCommandBuffer cmd = createTempCmdBuffer();
-  cmdUpdateRendererFromState(cmd, swapchainSizeChanged, forceRebuildAll);
-  vkEndCommandBuffer(cmd);
-
-  m_submission.enqueue(cmd);
-  submissionExecute();
-  vkDeviceWaitIdle(m_context);
-  m_ringFences.reset();
-  m_ringCmdPool.reset();
-}
-
-void Sample::cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchainSizeChanged, bool forceRebuildAll)
+void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuildAll)
 {
   m_state.recomputeAntialiasingSettings();
 
   // Determine what needs to be rebuilt
   swapchainSizeChanged |= forceRebuildAll;
 
-  const bool vsyncChanged = (m_lastVsync != getVsync()) || forceRebuildAll;
+  const bool uniformBuffersNeedReinit = (m_uniformBuffers.size() != m_app->getFrameCycleSize()) || forceRebuildAll;
 
   const bool shadersNeedUpdate = (m_state.algorithm != m_lastState.algorithm)                       //
                                  || (m_state.oitLayers != m_lastState.oitLayers)                    //
@@ -280,7 +163,6 @@ void Sample::cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchai
                                         || forceRebuildAll;
 
   const bool framebuffersAndDescriptorsNeedReinit = imagesNeedReinit  //
-                                                    || vsyncChanged   //
                                                     || forceRebuildAll;
 
   const bool renderPassesNeedReinit = (m_state.msaa != m_lastState.msaa)  //
@@ -289,28 +171,48 @@ void Sample::cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchai
   const bool pipelinesNeedReinit = (m_state.algorithm != m_lastState.algorithm)  //
                                    || shadersNeedUpdate || imagesNeedReinit;
 
-  const bool anythingChanged = shadersNeedUpdate || sceneNeedsReinit || imagesNeedReinit || descriptorSetsNeedReinit
-                               || framebuffersAndDescriptorsNeedReinit || renderPassesNeedReinit;
+  const bool anythingChanged = uniformBuffersNeedReinit || shadersNeedUpdate || sceneNeedsReinit || imagesNeedReinit
+                               || descriptorSetsNeedReinit || framebuffersAndDescriptorsNeedReinit || renderPassesNeedReinit;
 
   if(anythingChanged)
   {
-    vkDeviceWaitIdle(m_context);
-    LOGI("framebuffer: %d x %d (%d msaa)\n", m_windowState.m_swapSize[0], m_windowState.m_swapSize[1], m_state.msaa);
+    const VkExtent2D viewportSize = getViewportSize();
+    LOGI("Framebuffer: %u x %u, %d MSAA sample(s)\n", viewportSize.width, viewportSize.height, m_state.msaa);
+    LOGI("Building:\n");
+    if(uniformBuffersNeedReinit)
+      LOGI("  Uniform buffers\n");
+    if(sceneNeedsReinit)
+      LOGI("  Scene\n");
+    if(imagesNeedReinit)
+      LOGI("  Frame images\n");
+    if(descriptorSetsNeedReinit)
+      LOGI("  Descriptor sets\n");
+    if(renderPassesNeedReinit)
+      LOGI("  Render passes\n");
+    if(framebuffersAndDescriptorsNeedReinit)
+      LOGI("  Framebuffers\n");
+    if(shadersNeedUpdate)
+      LOGI("  Shaders\n");
+    if(pipelinesNeedReinit)
+      LOGI("  Pipelines\n");
 
-    if(vsyncChanged || swapchainSizeChanged)
+    vkDeviceWaitIdle(m_ctx->getDevice());
+    // TODO: Pass this command buffer to more functions that can use it
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
+
+    if(uniformBuffersNeedReinit)
     {
-      m_swapChain.cmdUpdateBarriers(cmdBuffer);
       createUniformBuffers();
     }
 
     if(sceneNeedsReinit)
     {
-      initScene(cmdBuffer);
+      initScene();
     }
 
     if(imagesNeedReinit)
     {
-      createFrameImages(cmdBuffer);
+      createFrameImages(cmd);
     }
 
     if(descriptorSetsNeedReinit)
@@ -320,7 +222,7 @@ void Sample::cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchai
 
     if(renderPassesNeedReinit)
     {
-      createNonGUIRenderPasses();
+      createRenderPasses();
     }
 
     if(framebuffersAndDescriptorsNeedReinit)
@@ -339,105 +241,114 @@ void Sample::cmdUpdateRendererFromState(VkCommandBuffer cmdBuffer, bool swapchai
       createGraphicsPipelines();
     }
 
-    setUpViewportsAndScissors();
-    m_lastVsync = getVsync();
+    m_app->submitAndWaitTempCmdBuffer(cmd);
+
+    m_lastState = m_state;
   }
 }
 
-void Sample::end()
+void Sample::onDetach()
 {
-  vkDeviceWaitIdle(m_context);
-  m_profilerVK.deinit();
-
-  ImGui::ShutdownVK();
-  ImGui::DestroyContext();
+  vkDeviceWaitIdle(m_ctx->getDevice());  // Not sure if still needed
+  m_profilerGPU.deinit();
+  m_profiler.destroyTimeline(m_profilerTimeline);
 
   // From updateRendererFromState
   destroyGraphicsPipelines();
-  m_shaderModuleManager.deinit();
+  destroyShaderModules();
   destroyFramebuffers();
-  destroyNonGUIRenderPasses();
-  destroyGUIRenderPass();
+  destroyRenderPasses();
   destroyDescriptorSets();
   destroyFrameImages();
   destroyScene();
   destroyUniformBuffers();
-  // From begin
-  m_allocatorDma.deinit();
 
+  // from onAttach()
+  m_viewportImage.deinit();
+  m_allocator.deinit();
   destroyTextureSampler();
-  m_ringCmdPool.deinit();
-  m_ringFences.deinit();
 }
 
 void Sample::destroyTextureSampler()
 {
-  vkDestroySampler(m_context, m_pointSampler, nullptr);
+  vkDestroySampler(m_ctx->getDevice(), m_pointSampler, nullptr);
 }
 
 void Sample::createTextureSampler()
 {
   // Create a point sampler using base Vulkan
-  VkSamplerCreateInfo samplerInfo     = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-  samplerInfo.magFilter               = VK_FILTER_LINEAR;
-  samplerInfo.minFilter               = VK_FILTER_LINEAR;
-  samplerInfo.addressModeU            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeV            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.addressModeW            = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-  samplerInfo.anisotropyEnable        = VK_FALSE;
-  samplerInfo.borderColor             = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-  samplerInfo.unnormalizedCoordinates = VK_FALSE;
-  samplerInfo.compareEnable           = VK_FALSE;
-  samplerInfo.mipmapMode              = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+  const VkSamplerCreateInfo samplerInfo = {
+      .sType                   = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+      .magFilter               = VK_FILTER_LINEAR,
+      .minFilter               = VK_FILTER_LINEAR,
+      .mipmapMode              = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+      .addressModeU            = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      .addressModeV            = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      .addressModeW            = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+      .anisotropyEnable        = VK_FALSE,
+      .compareEnable           = VK_FALSE,
+      .borderColor             = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+      .unnormalizedCoordinates = VK_FALSE,
+  };
 
-  NVVK_CHECK(vkCreateSampler(m_context, &samplerInfo, nullptr, &m_pointSampler));
+  NVVK_CHECK(vkCreateSampler(m_ctx->getDevice(), &samplerInfo, nullptr, &m_pointSampler));
 }
 
 void Sample::destroyUniformBuffers()
 {
   for(nvvk::Buffer& uniformBuffer : m_uniformBuffers)
   {
-    m_allocatorDma.destroy(uniformBuffer);
+    m_allocator.destroyBuffer(uniformBuffer);
   }
+  m_uniformBuffers.clear();
 }
 
 void Sample::createUniformBuffers()
 {
   destroyUniformBuffers();
 
-  VkDeviceSize bufferSize = sizeof(SceneData);
+  VkDeviceSize bufferSize = sizeof(shaderio::SceneData);
 
-  m_uniformBuffers.resize(m_swapChain.getImageCount());
+  const uint32_t numSwapChainImages = m_app->getFrameCycleSize();
+  m_uniformBuffers.resize(numSwapChainImages);
 
-  for(uint32_t i = 0; i < m_swapChain.getImageCount(); i++)
+  for(uint32_t i = 0; i < numSwapChainImages; i++)
   {
-    m_uniformBuffers[i] = m_allocatorDma.createBuffer(bufferSize,                          // Buffer size
-                                                      VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,  // Usage
-                                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT  // Memory flags
-    );
+    NVVK_CHECK(m_allocator.createBuffer(m_uniformBuffers[i],                  // Buffer
+                                        bufferSize,                           // Buffer size
+                                        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,   // Usage
+                                        VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,  // VMA memory usage
+                                        VMA_ALLOCATION_CREATE_MAPPED_BIT      // Persistently map the memory
+                                            | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT));  // We'll memcpy to it all at once
   }
 }
 
 void Sample::destroyScene()
 {
-  m_allocatorDma.destroy(m_indexBuffer);
-  m_allocatorDma.destroy(m_vertexBuffer);
+  m_allocator.destroyBuffer(m_indexBuffer);
+  m_allocator.destroyBuffer(m_vertexBuffer);
 }
 
-void Sample::initScene(VkCommandBuffer commandBuffer)
+void Sample::initScene()
 {
   destroyScene();
-  // A Mesh consists of vectors of vertices, triangle list indices, and lines.
-  // It assumes that its type contains variables, at least, each vertex's position, normal, and color.
-  // (We'll ignore lines when converting this to a vertex and index buffer.)
-  nvh::geometry::Mesh<Vertex> completeMesh;
+  // A mesh consists of vectors of vertices and triangle list indices.
+  std::vector<Vertex> vertices;
+  static_assert(alignof(Vertex) == 4 && sizeof(Vertex) == 40);
+  std::vector<glm::uvec3> triangles;
+  static_assert(alignof(glm::vec3) == 4 && sizeof(glm::vec3) == 12);
 
-  // We'll use C++11-style random number generation here, but you could also do this
-  // with rand() and srand().
+  // It'll contain multiple instances of this sphere. For now, we'll flatten it
+  // into a single pair of buffers, but we could certainly use instanced calls
+  // here.
+  const nvutils::PrimitiveMesh sphere = nvutils::createSphereUv(1.0f, m_state.subdiv * 2, m_state.subdiv);
+  m_objectTriangleIndices             = static_cast<uint32_t>(3 * sphere.triangles.size());
+
+  // We'll use C++11-style random number generation here
   std::default_random_engine            rnd(3625);  // Fixed seed
   std::uniform_real_distribution<float> uniformDist;
 
-  for(uint32_t i = 0; i < m_state.numObjects; i++)
+  for(uint32_t object = 0; object < uint32_t(m_state.numObjects); object++)
   {
     // Generate a random position in [-GLOBAL_SCALE/2, GLOBAL_SCALE/2)^3
     glm::vec3 center(uniformDist(rnd), uniformDist(rnd), uniformDist(rnd));
@@ -447,365 +358,277 @@ void Sample::initScene(VkCommandBuffer commandBuffer)
     float radius = GLOBAL_SCALE * 0.9f / GRID_SIZE;
     radius *= uniformDist(rnd) * m_state.scaleWidth + m_state.scaleMin;
 
-    // Our vectors are vertical, so this represents a scale followed by a translation:
-    glm::mat4 matrix = glm::translate(glm::mat4(1.f), center) * glm::scale(glm::mat4(1.f), glm::vec3(radius));
-
-    // Add a sphere to the complete mesh, and then color it:
-    const uint32_t vtxStart = completeMesh.getVerticesCount();  // First vertex to color
-
-    nvh::geometry::Sphere<Vertex>::add(completeMesh, matrix, m_state.subdiv * 2, m_state.subdiv);
-
-    if(i == 0)
-    {
-      m_objectTriangleIndices = completeMesh.getTriangleIndicesCount();
-    }
-
-    // Color in unpremultiplied linear space
+    // Generate a random color and transparency. Since the color we'll store
+    // will be in unpremultiplied linear space but we want a perceptual-ish
+    // distribution of colors, we square .rgb.
     glm::vec4 color(uniformDist(rnd), uniformDist(rnd), uniformDist(rnd), uniformDist(rnd));
     color.x *= color.x;
     color.y *= color.y;
     color.z *= color.z;
-    uint32_t vtxEnd = completeMesh.getVerticesCount();
-    for(uint32_t v = vtxStart; v < vtxEnd; v++)
+
+    // What's the index of our first vertex?
+    const uint32_t firstVertex = static_cast<uint32_t>(vertices.size());
+
+    // Append a scaled and translated version of the sphere.
+    for(size_t v = 0; v < sphere.vertices.size(); v++)
     {
-      completeMesh.m_vertices[v].color = color;
+      Vertex vtx = sphere.vertices[v];
+      vtx.pos    = vtx.pos * radius + center;
+      vtx.color  = color;
+      vertices.push_back(vtx);
+    }
+    for(size_t triIdx = 0; triIdx < sphere.triangles.size(); triIdx++)
+    {
+      const glm::uvec3 indices = firstVertex + sphere.triangles[triIdx].indices;
+      triangles.push_back(indices);
     }
   }
 
   // Count the total number of triangle indices
-  m_sceneTriangleIndices = completeMesh.getTriangleIndicesCount();
+  m_sceneTriangleIndices = static_cast<uint32_t>(3 * triangles.size());
 
   // Create the vertex and index buffers and synchronously upload them to the
   // GPU, waiting for them to finish uploading. Note that applications may wish
   // to implement asynchronous uploads, which you can see how to do in the
   // vk_async_resources sample.
-
-  nvvk::StagingMemoryManager scopedTransfer(m_allocatorDma.getMemoryAllocator());
+  nvvk::StagingUploader uploader;
+  uploader.init(&m_allocator);
   {
-    // When this goes out of scope, it'll synchronously perform all of the copy operations.
-    // 'scopedTransfer' can then safely go out of scope after it.
-    nvvk::ScopeCommandBuffer cmd(m_context, m_context.m_queueT, m_context.m_queueT);
+    VkCommandBuffer cmd = m_app->createTempCmdBuffer();
 
     // Create vertex buffer
-    VkDeviceSize vtxBufferSize = static_cast<VkDeviceSize>(completeMesh.getVerticesSize());
-    m_vertexBuffer             = m_allocatorDma.createBuffer(vtxBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    scopedTransfer.cmdToBuffer(cmd, m_vertexBuffer.buffer, 0, vtxBufferSize, completeMesh.m_vertices.data());
-    m_debug.setObjectName(m_vertexBuffer.buffer, "m_vertexBuffer");
+    const VkDeviceSize vtxBufferSize = static_cast<VkDeviceSize>(sizeof(vertices[0]) * vertices.size());
+    NVVK_CHECK(m_allocator.createBuffer(m_vertexBuffer, vtxBufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
+    NVVK_DBG_NAME(m_vertexBuffer.buffer);
+    uploader.appendBuffer<Vertex>(m_vertexBuffer, 0, vertices);
 
-    VkDeviceSize idxBufferSize = static_cast<VkDeviceSize>(completeMesh.getTriangleIndicesSize());
-    m_indexBuffer              = m_allocatorDma.createBuffer(idxBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
-    scopedTransfer.cmdToBuffer(cmd, m_indexBuffer.buffer, 0, idxBufferSize, completeMesh.m_indicesTriangles.data());
-    m_debug.setObjectName(m_indexBuffer.buffer, "m_indexBuffer");
+    const VkDeviceSize idxBufferSize = static_cast<VkDeviceSize>(sizeof(triangles[0]) * triangles.size());
+    NVVK_CHECK(m_allocator.createBuffer(m_indexBuffer, idxBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+    NVVK_DBG_NAME(m_indexBuffer.buffer);
+    uploader.appendBuffer<glm::uvec3>(m_indexBuffer, 0, triangles);
+
+    uploader.cmdUploadAppended(cmd);
+    // Once this returns, all of the copy operations will have been completed.
+    m_app->submitAndWaitTempCmdBuffer(cmd);
   }
+  uploader.deinit();
 }
 
 void Sample::destroyFramebuffers()
 {
-  vkDestroyFramebuffer(m_context, m_mainColorDepthFramebuffer, nullptr);
-  m_mainColorDepthFramebuffer = nullptr;
+  vkDestroyFramebuffer(m_app->getDevice(), m_mainColorDepthFramebuffer, nullptr);
+  m_mainColorDepthFramebuffer = VK_NULL_HANDLE;
 
-  vkDestroyFramebuffer(m_context, m_guiFramebuffer, nullptr);
-  m_guiFramebuffer = nullptr;
-
-  if(m_weightedFramebuffer != nullptr)
+  if(m_weightedFramebuffer != VK_NULL_HANDLE)
   {
-    vkDestroyFramebuffer(m_context, m_weightedFramebuffer, nullptr);
-    m_weightedFramebuffer = nullptr;
+    vkDestroyFramebuffer(m_app->getDevice(), m_weightedFramebuffer, nullptr);
+    m_weightedFramebuffer = VK_NULL_HANDLE;
   }
 }
 
 void Sample::createFramebuffers()
 {
   destroyFramebuffers();
+  // TODO: Remove and replace with dynamic rendering
 
   // Color + depth offscreen framebuffer
   {
-    std::array<VkImageView, 2> attachments = {m_colorImage.view, m_depthImage.view};
-    VkFramebufferCreateInfo    fbInfo      = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    fbInfo.renderPass                      = m_renderPassColorDepthClear;
-    fbInfo.attachmentCount                 = static_cast<uint32_t>(attachments.size());
-    fbInfo.pAttachments                    = attachments.data();
-    fbInfo.width                           = m_colorImage.c_width;
-    fbInfo.height                          = m_colorImage.c_height;
-    fbInfo.layers                          = 1;
+    const std::array<VkImageView, 2> attachments{m_colorImage.getView(), m_depthImage.getView()};
+    const VkFramebufferCreateInfo    fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                                            .renderPass      = m_renderPassColorDepthClear,
+                                            .attachmentCount = static_cast<uint32_t>(attachments.size()),
+                                            .pAttachments    = attachments.data(),
+                                            .width           = m_colorImage.getWidth(),
+                                            .height          = m_colorImage.getHeight(),
+                                            .layers          = 1};
 
-    NVVK_CHECK(vkCreateFramebuffer(m_context, &fbInfo, NULL, &m_mainColorDepthFramebuffer));
-
-    m_debug.setObjectName(m_mainColorDepthFramebuffer, "m_mainColorDepthFramebuffer");
+    NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, NULL, &m_mainColorDepthFramebuffer));
+    NVVK_DBG_NAME(m_mainColorDepthFramebuffer);
   }
 
   // Weighted color + weighted reveal framebuffer (for Weighted, Blended
   // Order-Independent Transparency). See the render pass description for more info.
   if(m_state.algorithm == OIT_WEIGHTED)
   {
-    std::array<VkImageView, 4> attachments = {m_oitWeightedColorImage.view,   //
-                                              m_oitWeightedRevealImage.view,  //
-                                              m_colorImage.view,              //
-                                              m_depthImage.view};
+    const std::array<VkImageView, 4> attachments{m_oitWeightedColorImage.getView(),   //
+                                                 m_oitWeightedRevealImage.getView(),  //
+                                                 m_colorImage.getView(),              //
+                                                 m_depthImage.getView()};
 
-    VkFramebufferCreateInfo framebufferInfo = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    framebufferInfo.renderPass              = m_renderPassWeighted;
-    framebufferInfo.attachmentCount         = static_cast<uint32_t>(attachments.size());
-    framebufferInfo.pAttachments            = attachments.data();
-    framebufferInfo.width                   = m_oitWeightedColorImage.c_width;
-    framebufferInfo.height                  = m_oitWeightedColorImage.c_height;
-    framebufferInfo.layers                  = 1;
+    const VkFramebufferCreateInfo fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                                         .renderPass      = m_renderPassWeighted,
+                                         .attachmentCount = static_cast<uint32_t>(attachments.size()),
+                                         .pAttachments    = attachments.data(),
+                                         .width           = m_oitWeightedColorImage.getWidth(),
+                                         .height          = m_oitWeightedColorImage.getHeight(),
+                                         .layers          = 1};
 
-    NVVK_CHECK(vkCreateFramebuffer(m_context, &framebufferInfo, nullptr, &m_weightedFramebuffer));
-
-    m_debug.setObjectName(m_weightedFramebuffer, "m_weightedColorRevealFramebuffer");
-  }
-
-  // ui related
-  {
-    VkImageView uiTarget = m_guiCompositeImage.view;
-
-    // Create framebuffers
-    VkImageView bindInfos[1];
-    bindInfos[0] = uiTarget;
-
-    VkFramebufferCreateInfo fbInfo = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-    fbInfo.attachmentCount         = NV_ARRAY_SIZE(bindInfos);
-    fbInfo.pAttachments            = bindInfos;
-    fbInfo.width                   = m_windowState.m_swapSize[0];
-    fbInfo.height                  = m_windowState.m_swapSize[1];
-    fbInfo.layers                  = 1;
-
-    fbInfo.renderPass = m_renderPassGUI;
-    NVVK_CHECK(vkCreateFramebuffer(m_context, &fbInfo, NULL, &m_guiFramebuffer));
+    NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, nullptr, &m_weightedFramebuffer));
+    NVVK_DBG_NAME(m_weightedFramebuffer);
   }
 }
 
-void Sample::setUpViewportsAndScissors()
+VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
+                                          const VkShaderModule vertShaderModule,
+                                          const VkShaderModule fragShaderModule,
+                                          BlendMode            blendMode,
+                                          bool                 usesVertexInput,
+                                          bool                 isDoubleSided,
+                                          VkRenderPass         renderPass,
+                                          uint32_t             subpass)
 {
-  m_scissorGUI               = {0};  // Zero-initialize
-  m_scissorGUI.extent.width  = m_windowState.m_swapSize[0];
-  m_scissorGUI.extent.height = m_windowState.m_swapSize[1];
+  const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {
+      VkPipelineShaderStageCreateInfo{.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                      .stage  = VK_SHADER_STAGE_VERTEX_BIT,
+                                      .module = vertShaderModule,
+                                      .pName  = "main"},
+      VkPipelineShaderStageCreateInfo{.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                      .stage  = VK_SHADER_STAGE_FRAGMENT_BIT,
+                                      .module = fragShaderModule,
+                                      .pName  = "main"}};
 
-  m_viewportGUI          = {0};  // Zero-initialize
-  m_viewportGUI.width    = static_cast<float>(m_scissorGUI.extent.width);
-  m_viewportGUI.height   = static_cast<float>(m_scissorGUI.extent.height);
-  m_viewportGUI.minDepth = 0.0f;
-  m_viewportGUI.maxDepth = 1.0f;
-}
+  const VkVertexInputBindingDescription vtxBindingDescription = Vertex::getBindingDescription();
+  const auto                            vtxAttributes         = Vertex::getAttributeDescriptions();
 
-void Sample::createOrReloadShaderModule(nvvk::ShaderModuleID& shaderModule,
-                                        VkShaderStageFlags    shaderStage,
-                                        const std::string&    filename,
-                                        const std::string&    prepend)
-{
-  if(shaderModule.isValid())
-  {
-    // Reload and recompile this module from source.
-    m_shaderModuleManager.reloadModule(shaderModule);
-  }
-  else
-  {
-    // Register and compile the shader module with the shader module manager.
-    shaderModule = m_shaderModuleManager.createShaderModule(shaderStage, filename, prepend);
-  }
-  assert(shaderModule.isValid());
-#ifdef _DEBUG
-  std::string generatedShaderName = filename + " " + prepend;
-  m_debug.setObjectName(m_shaderModuleManager.get(shaderModule), generatedShaderName.c_str());
-#endif  // #if _DEBUG
-}
-
-void Sample::destroyGraphicsPipeline(VkPipeline& pipeline)
-{
-  if(pipeline != nullptr)
-  {
-    vkDestroyPipeline(m_context, pipeline, nullptr);
-    pipeline = nullptr;
-  }
-}
-
-VkPipeline Sample::createGraphicsPipeline(const nvvk::ShaderModuleID& vertShaderModuleID,
-                                          const nvvk::ShaderModuleID& fragShaderModuleID,
-                                          BlendMode                   blendMode,
-                                          bool                        usesVertexInput,
-                                          bool                        isDoubleSided,
-                                          VkRenderPass                renderPass,
-                                          uint32_t                    subpass)
-{
-  VkShaderModule vertShaderModule = m_shaderModuleManager.get(vertShaderModuleID);
-  VkShaderModule fragShaderModule = m_shaderModuleManager.get(fragShaderModuleID);
-
-  nvvk::GraphicsPipelineGeneratorCombined pipelineState(m_context, m_descriptorInfo.getPipeLayout(), renderPass);
-
-  pipelineState.addShader(vertShaderModule,           // Shader module
-                          VK_SHADER_STAGE_VERTEX_BIT  // Stage
-  );
-
-  pipelineState.addShader(fragShaderModule,             // Shader module
-                          VK_SHADER_STAGE_FRAGMENT_BIT  // Stage
-  );
-
+  VkPipelineVertexInputStateCreateInfo vertexInput{.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
   if(usesVertexInput)
   {
-    // Vertex input layout
-    VkVertexInputBindingDescription bindingDescription = Vertex::getBindingDescription();
-    auto                            attributes         = Vertex::getAttributeDescriptions();
-
-    pipelineState.addBindingDescription(bindingDescription);
-    for(const auto& attribute : attributes)
-    {
-      pipelineState.addAttributeDescription(attribute);
-    }
+    vertexInput.vertexBindingDescriptionCount   = 1;
+    vertexInput.pVertexBindingDescriptions      = &vtxBindingDescription;
+    vertexInput.vertexAttributeDescriptionCount = uint32_t(vtxAttributes.size());
+    vertexInput.pVertexAttributeDescriptions    = vtxAttributes.data();
   }
 
-  pipelineState.inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  const VkPipelineInputAssemblyStateCreateInfo inputAssembly{.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+                                                             .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
 
-  VkViewport viewport = {};
-  viewport.x          = 0.0f;
-  viewport.y          = 0.0f;
-  viewport.width      = static_cast<float>(m_colorImage.c_width);
-  viewport.height     = static_cast<float>(m_colorImage.c_height);
-  viewport.minDepth   = 0.0f;
-  viewport.maxDepth   = 1.0f;
+  const VkViewport viewport{.width    = static_cast<float>(m_colorImage.getWidth()),
+                            .height   = static_cast<float>(m_colorImage.getHeight()),
+                            .minDepth = 0.0f,
+                            .maxDepth = 1.0f};
 
-  VkRect2D scissor      = {};
-  scissor.offset        = {0, 0};
-  scissor.extent.width  = m_colorImage.c_width;
-  scissor.extent.height = m_colorImage.c_height;
+  const VkRect2D scissor{.extent = {m_colorImage.getWidth(), m_colorImage.getHeight()}};
 
-  pipelineState.clearDynamicStateEnables();
-  pipelineState.setViewportsCount(1);
-  pipelineState.setViewport(0, viewport);
-  pipelineState.setScissorsCount(1);
-  pipelineState.setScissor(0, scissor);
+  const VkPipelineViewportStateCreateInfo viewportInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+                                                       .viewportCount = 1,
+                                                       .pViewports    = &viewport,
+                                                       .scissorCount  = 1,
+                                                       .pScissors     = &scissor};
 
-  // Enable backface culling
-  pipelineState.rasterizationState.cullMode        = (isDoubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
-  pipelineState.rasterizationState.frontFace       = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-  pipelineState.rasterizationState.polygonMode     = VK_POLYGON_MODE_FILL;
-  pipelineState.rasterizationState.lineWidth       = 1.f;
-  pipelineState.rasterizationState.depthBiasEnable = false;
-  pipelineState.rasterizationState.depthBiasConstantFactor = 0.f;
-  pipelineState.rasterizationState.depthBiasSlopeFactor    = 0.f;
+  const VkPipelineRasterizationStateCreateInfo rasterization{
+      .sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+      .polygonMode = VK_POLYGON_MODE_FILL,
+      .cullMode    = VkCullModeFlags(isDoubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT),
+      .frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+  };
 
-  pipelineState.multisampleState.rasterizationSamples = (static_cast<VkSampleCountFlagBits>(m_state.msaa));
+  const VkPipelineMultisampleStateCreateInfo msaa{.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                                                  .rasterizationSamples = static_cast<VkSampleCountFlagBits>(m_state.msaa)};
 
-  pipelineState.depthStencilState.depthBoundsTestEnable = false;
+  VkPipelineDepthStencilStateCreateInfo depthStencilState{.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+                                                          .depthTestEnable = true,
+                                                          .depthCompareOp  = VK_COMPARE_OP_LESS};
+  std::array<VkPipelineColorBlendAttachmentState, 2> blendAttachments{};
+  VkPipelineColorBlendStateCreateInfo blendInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                                                .attachmentCount = 1,  // This can be modified below
+                                                .pAttachments    = blendAttachments.data()};
 
-
-  const VkCompareOp           compareOp = VK_COMPARE_OP_LESS;
-  const VkColorComponentFlags allBits =
+  constexpr VkColorComponentFlags allBits =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
   switch(blendMode)
   {
     case BlendMode::NONE:
       // Test and write to depth
-      pipelineState.depthStencilState.depthTestEnable  = true;
-      pipelineState.depthStencilState.depthWriteEnable = true;
-      pipelineState.depthStencilState.depthCompareOp   = compareOp;
-      pipelineState.setBlendAttachmentState(0,  // Attachment
-                                            nvvk::GraphicsPipelineState::makePipelineColorBlendAttachmentState());  // Disable blending
+      depthStencilState.depthWriteEnable = true;
+      blendAttachments[0] = VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = allBits};
+      // Leave blending disabled
       break;
     case BlendMode::PREMULTIPLIED:
       // Test but don't write to depth
-      pipelineState.depthStencilState.depthTestEnable  = true;
-      pipelineState.depthStencilState.depthWriteEnable = false;
-      pipelineState.depthStencilState.depthCompareOp   = compareOp;
-      pipelineState.setBlendAttachmentState(0,  // Attachment
-                                            nvvk::GraphicsPipelineState::makePipelineColorBlendAttachmentState(
-                                                allBits, VK_TRUE,                     //
-                                                VK_BLEND_FACTOR_ONE,                  // Source color blend factor
-                                                VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,  // Destination color blend factor
-                                                VK_BLEND_OP_ADD,                      // Color blend operation
-                                                VK_BLEND_FACTOR_ONE,                  // Source alpha blend factor
-                                                VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,  // Destination alpha blend factor
-                                                VK_BLEND_OP_ADD));                    // Alpha blend operation
+      depthStencilState.depthWriteEnable = false;
+      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                               .colorWriteMask = allBits};
       break;
     case BlendMode::WEIGHTED_COLOR:
       // Test but don't write to depth
-      pipelineState.depthStencilState.depthTestEnable  = true;
-      pipelineState.depthStencilState.depthWriteEnable = false;
-      pipelineState.depthStencilState.depthCompareOp   = compareOp;
-      pipelineState.setBlendAttachmentCount(2);
-      pipelineState.setBlendAttachmentState(0,  // Attachment
-                                            nvvk::GraphicsPipelineState::makePipelineColorBlendAttachmentState(
-                                                allBits, VK_TRUE,     //
-                                                VK_BLEND_FACTOR_ONE,  // Source color blend factor
-                                                VK_BLEND_FACTOR_ONE,  // Destination color blend factor
-                                                VK_BLEND_OP_ADD,      // Color blend operation
-                                                VK_BLEND_FACTOR_ONE,  // Source alpha blend factor
-                                                VK_BLEND_FACTOR_ONE,  // Destination alpha blend factor
-                                                VK_BLEND_OP_ADD));    // Alpha blend operation
-      pipelineState.setBlendAttachmentState(1,                        // Attachment
-                                            nvvk::GraphicsPipelineState::makePipelineColorBlendAttachmentState(
-                                                allBits, VK_TRUE,                     //
-                                                VK_BLEND_FACTOR_ZERO,                 // Source color blend factor
-                                                VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,  // Destination color blend factor
-                                                VK_BLEND_OP_ADD,                      // Color blend operation
-                                                VK_BLEND_FACTOR_ZERO,                 // Source alpha blend factor
-                                                VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,  // Destination alpha blend factor
-                                                VK_BLEND_OP_ADD));                    // Alpha blend operation
+      depthStencilState.depthWriteEnable = false;
+      blendInfo.attachmentCount          = 2;
+      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                               .colorWriteMask      = allBits};
+      blendAttachments[1]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
+                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                               .colorWriteMask = allBits};
       break;
     case BlendMode::WEIGHTED_COMPOSITE:
       // Test but don't write to depth
-      pipelineState.depthStencilState.depthTestEnable  = true;
-      pipelineState.depthStencilState.depthWriteEnable = false;
-      pipelineState.depthStencilState.depthCompareOp   = compareOp;
-      pipelineState.setBlendAttachmentState(0,  // Attachment
-                                            nvvk::GraphicsPipelineState::makePipelineColorBlendAttachmentState(
-                                                allBits, VK_TRUE,                     //
-                                                VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,  // Source color blend factor
-                                                VK_BLEND_FACTOR_SRC_ALPHA,            // Destination color blend factor
-                                                VK_BLEND_OP_ADD,                      // Color blend operation
-                                                VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,  // Source alpha blend factor
-                                                VK_BLEND_FACTOR_SRC_ALPHA,            // Destination alpha blend factor
-                                                VK_BLEND_OP_ADD));                    // Alpha blend operation
+      depthStencilState.depthWriteEnable = false;
+      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable = VK_TRUE,
+                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+                                                                               .colorWriteMask      = allBits};
       break;
     default:
       assert(!"Blend mode configuration not implemented!");
       break;
   }
 
-  pipelineState.setRenderPass(renderPass);
-  pipelineState.createInfo.subpass = subpass;
+  const VkGraphicsPipelineCreateInfo info{.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                                          .stageCount          = uint32_t(stages.size()),
+                                          .pStages             = stages.data(),
+                                          .pVertexInputState   = &vertexInput,
+                                          .pInputAssemblyState = &inputAssembly,
+                                          .pViewportState      = &viewportInfo,
+                                          .pRasterizationState = &rasterization,
+                                          .pMultisampleState   = &msaa,
+                                          .pDepthStencilState  = &depthStencilState,
+                                          .pColorBlendState    = &blendInfo,
+                                          .layout              = m_pipelineLayout,
+                                          .renderPass          = renderPass,
+                                          .subpass             = subpass};
 
-  VkPipeline pipeline = pipelineState.createPipeline();
-  if(pipeline == VK_NULL_HANDLE)
-  {
-    throw std::runtime_error("Failed to create graphics pipeline!");
-  }
-
-#ifdef _DEBUG
-  // Generate a name for the graphics pipeline
-  std::string generatedPipelineName = std::to_string(vertShaderModuleID.m_value) + " "                //
-                                      + std::to_string(fragShaderModuleID.m_value) + " "              //
-                                      + std::to_string(static_cast<uint32_t>(blendMode)) + " "        //
-                                      + std::to_string(usesVertexInput) + " "                         //
-                                      + std::to_string(reinterpret_cast<uint64_t>(renderPass)) + " "  //
-                                      + std::to_string(subpass);
-  m_debug.setObjectName(pipeline, generatedPipelineName.c_str());
-#endif
+  VkPipeline pipeline = VK_NULL_HANDLE;
+  NVVK_CHECK(vkCreateGraphicsPipelines(m_app->getDevice(), VK_NULL_HANDLE, 1, &info, nullptr, &pipeline));
+  nvvk::DebugUtil::getInstance().setObjectName(pipeline, debugName);
 
   return pipeline;
-}
-
-VkCommandBuffer Sample::createTempCmdBuffer()
-{
-  VkCommandBuffer          cmd       = m_ringCmdPool.createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
-  VkCommandBufferBeginInfo beginInfo = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-  beginInfo.flags                    = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  NVVK_CHECK(vkBeginCommandBuffer(cmd, &beginInfo));
-  return cmd;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // Main rendering logic                                                      //
 ///////////////////////////////////////////////////////////////////////////////
 
+VkExtent2D Sample::getViewportSize() const
+{
+  const VkExtent2D rawSize = m_app->getViewportSize();
+  return VkExtent2D{.width = std::max(1U, rawSize.width), .height = std::max(1U, rawSize.height)};
+}
+
 void Sample::updateUniformBuffer(uint32_t currentImage, double time)
 {
-  const uint32_t width       = m_colorImage.c_width;
-  const uint32_t height      = m_colorImage.c_height;
+  // TODO: This can be changed to all be push constants!
+  const uint32_t width       = m_colorImage.getWidth();
+  const uint32_t height      = m_colorImage.getHeight();
   const float    aspectRatio = static_cast<float>(width) / static_cast<float>(height);
   glm::mat4      projection  = glm::perspectiveRH_ZO(glm::radians(45.0f), aspectRatio, 0.01f, 50.0f);
   projection[1][1] *= -1;
-  glm::mat4 view = m_cameraControl.m_viewMatrix;
+  glm::mat4 view = m_cameraControl->getViewMatrix();
 
   m_sceneUbo.projViewMatrix             = projection * view;
   m_sceneUbo.viewMatrix                 = view;
@@ -813,24 +636,29 @@ void Sample::updateUniformBuffer(uint32_t currentImage, double time)
 
   m_sceneUbo.viewport = glm::ivec3(width, height, width * height);
 
-  void* data = m_allocatorDma.map(m_uniformBuffers[currentImage]);
-  memcpy(data, &m_sceneUbo, sizeof(m_sceneUbo));
-  m_allocatorDma.unmap(m_uniformBuffers[currentImage]);
+  memcpy(m_uniformBuffers[currentImage].mapping, &m_sceneUbo, sizeof(m_sceneUbo));
+  // TODO: Issue CPU -> GPU pipeline barrier
 }
 
-void Sample::copyOffscreenToBackBuffer(int winWidth, int winHeight, ImDrawData* imguiDrawData)
+void Sample::copyOffscreenToBackBuffer(VkCommandBuffer cmd)
 {
-  // This function resolves + scales m_colorImage into m_guiCompositeImage, draws the Dear ImGui GUI onto
-  // m_guiCompositeImage, and then blits m_guiCompositeImage onto the backbuffer. Because m_colorImage is
-  // generally a different format (B8G8R8A8_SRGB) than m_guiCompositeImage (R8G8B8A8) (which in turn is required by
-  // linear-space rendering) and sometimes a different size xor has different MSAA samples/pixel, the worst case
-  // (MSAA resolve + change of format) takes two steps.
-  // Note that we could do this in one step, and further customize the filters used, using a custom kernel.
-  // Finally, Vulkan allows us to access the swapchain images themselves. However, while a previous version of this
-  // sample did that, we now render the GUI to intermediate offscreen image, as this avoids potential problems with
-  // swapchain recreation, and may be more familiar to developers used to OpenGL applications.
+  // This function resolves + scales m_colorImage into m_viewportImage.
+  // Because m_colorImage is generally a different format (B8G8R8A8_SRGB) than
+  // m_viewportImage (R8G8B8A8) (which in turn is required by linear-space
+  // rendering) and sometimes a different size xor has different MSAA
+  // samples/pixel, the worst case (MSAA resolve + change of format) takes
+  // two steps.
   //
-  // As a result of the differences between MSAA resolve + downscaling, there are a few cases to handle.
+  // Note that we could do this in one step, and further customize the filters
+  // used, using a custom kernel.
+  //
+  // Finally, Vulkan allows us to access the swapchain images themselves.
+  // However, while a previous version of this sample did that, with the change
+  // to nvpro_core2, we now pass the image to Dear ImGui and tell it to draw
+  // the image into a viewport pane using `ImGui::Image` in `onUIRender()`.
+  //
+  // As a result of the differences between MSAA resolve + downscaling, there
+  // are a few cases to handle.
   // Here's a high-level node graph overview of this function:
   //
   //       MSAA?          Downsample?    Neither?
@@ -842,285 +670,182 @@ void Sample::copyOffscreenToBackBuffer(int winWidth, int winHeight, ImDrawData* 
   //                 |          V
   //                vkCmdCopyImage (reinterpret data)
   //                 V
-  //        m_guiCompositeImage
+  //          m_viewportImage
   //                 |
-  //       render Dear ImGui GUI
+  //    render Dear ImGui GUI (`onUIRender()`)
   //                 V
   //             Swapchain
 
-  // Start a separate command buffer for this function.
-  VkCommandBuffer          cmdBuffer = createTempCmdBuffer();
-  nvh::Profiler::SectionID sec       = m_profilerVK.beginSection("CopyOffscreenToBackBuffer", cmdBuffer);
+  NVVK_DBG_SCOPE(cmd);
+  auto section = m_profilerGPU.cmdFrameSection(cmd, __FUNCTION__);
 
   // Prepare to transfer from m_colorImage; check its initial state for soundness
-  assert(m_colorImage.currentLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-  assert(m_colorImage.currentAccesses == (VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT));
-  m_colorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT);
+  assert(m_colorImage.getLayout() == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  m_colorImage.transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
   // Tracks the image that will be passed to vkCmdCopyImage
   // These are the defaults if no resolve or downsample is required.
   VkImage       copySrcImage  = m_colorImage.image.image;
-  VkImageLayout copySrcLayout = m_colorImage.currentLayout;
+  VkImageLayout copySrcLayout = m_colorImage.getLayout();
 
   // If resolve or downsample required
   if(m_state.msaa != 1 || m_state.supersample != 1)
   {
     // Prepare to transfer data to m_downsampleImage
-    m_downsampleImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT);
+    m_downsampleImage.transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
     // MSAA branch
     if(m_state.msaa != 1)
     {
       // Resolve the MSAA image m_colorImage to m_downsampleImage
-      VkImageResolve region            = {0};  // Zero-initialize
-      region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      region.srcSubresource.layerCount = 1;
-      region.dstSubresource            = region.srcSubresource;
-      region.extent                    = {m_colorImage.c_width, m_colorImage.c_height, 1};
+      const VkImageResolve region{.srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1},
+                                  .dstSubresource = region.srcSubresource,
+                                  .extent = {.width = m_colorImage.getWidth(), .height = m_colorImage.getHeight(), .depth = 1}};
 
-      vkCmdResolveImage(cmdBuffer,                        // Command buffer
-                        m_colorImage.image.image,         // Source image
-                        m_colorImage.currentLayout,       // Source image layout
-                        m_downsampleImage.image.image,    // Destination image
-                        m_downsampleImage.currentLayout,  // Destination image layout
-                        1,                                // Number of regions
-                        &region);                         // Regions
+      vkCmdResolveImage(cmd,                            // Command buffer
+                        m_colorImage.image.image,       // Source image
+                        m_colorImage.getLayout(),       // Source image layout
+                        m_downsampleImage.image.image,  // Destination image
+                        m_downsampleImage.getLayout(),  // Destination image layout
+                        1,                              // Number of regions
+                        &region);                       // Regions
     }
     else
     {
       // Downsample m_colorImage to m_downsampleTargeImage
-      VkImageBlit region               = {0};  // Zero-initialize
-      region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-      region.srcSubresource.layerCount = 1;
-      region.dstSubresource            = region.srcSubresource;
-      region.srcOffsets[1]             = {static_cast<int32_t>(m_colorImage.c_width),   //
-                                          static_cast<int32_t>(m_colorImage.c_height),  //
-                                          1};
-      region.dstOffsets[1]             = {static_cast<int32_t>(m_downsampleImage.c_width),   //
-                                          static_cast<int32_t>(m_downsampleImage.c_height),  //
-                                          1};
+      const VkImageBlit region = {
+          .srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1},
+          .srcOffsets     = {{0, 0, 0}, {int32_t(m_colorImage.getWidth()), int32_t(m_colorImage.getHeight()), 1}},
+          .dstSubresource = region.srcSubresource,
+          .dstOffsets = {{0, 0, 0}, {int32_t(m_downsampleImage.getWidth()), int32_t(m_downsampleImage.getHeight()), 1}}};
 
-      vkCmdBlitImage(cmdBuffer,                        // Command buffer
-                     m_colorImage.image.image,         // Source image
-                     m_colorImage.currentLayout,       // Source image
-                     m_downsampleImage.image.image,    // Destination image
-                     m_downsampleImage.currentLayout,  // Destination image layout
-                     1,                                // Number of regions
-                     &region,                          // Regions
-                     VK_FILTER_LINEAR);                // Use tent filtering (= box filtering in this case)
+      vkCmdBlitImage(cmd,                            // Command buffer
+                     m_colorImage.image.image,       // Source image
+                     m_colorImage.getLayout(),       // Source image
+                     m_downsampleImage.image.image,  // Destination image
+                     m_downsampleImage.getLayout(),  // Destination image layout
+                     1,                              // Number of regions
+                     &region,                        // Regions
+                     VK_FILTER_LINEAR);              // Use tent filtering
     }
 
     // Prepare to transfer data from m_downsampleImage, and set copySrcImage and copySrcLayout.
-    m_downsampleImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT);
+    m_downsampleImage.transitionTo(cmd, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     copySrcImage  = m_downsampleImage.image.image;
-    copySrcLayout = m_downsampleImage.currentLayout;
+    copySrcLayout = m_downsampleImage.getLayout();
   }
 
-  // Prepare to transfer data to m_guiCompositeImage
-  m_guiCompositeImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT);
+  // Prepare to transfer data to m_viewportImage
+  // General -> VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+  nvvk::cmdImageMemoryBarrier(cmd, {.image            = m_viewportImage.getColorImage(),
+                                    .oldLayout        = VK_IMAGE_LAYOUT_GENERAL,
+                                    .newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                         .levelCount = VK_REMAINING_MIP_LEVELS,
+                                                         .layerCount = VK_REMAINING_ARRAY_LAYERS}});
 
-  // Now, we want to copy data from copySrcImage to m_guiCompositeImage instead of blitting it, since blitting will try
+  // Now, we want to copy data from copySrcImage to m_viewportImage instead of blitting it, since blitting will try
   // to convert the sRGB data and store it in linear format, which isn't what we want.
   {
-    VkImageCopy region               = {0};
-    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.srcSubresource.layerCount = 1;
-    region.dstSubresource            = region.srcSubresource;
-    region.extent                    = {m_guiCompositeImage.c_width, m_guiCompositeImage.c_height, 1};
-    vkCmdCopyImage(cmdBuffer,                          // Command buffer
-                   copySrcImage,                       // Source image
-                   copySrcLayout,                      // Source image layout
-                   m_guiCompositeImage.image.image,    // Destination image
-                   m_guiCompositeImage.currentLayout,  // Destination image layout
-                   1,                                  // Number of regions
-                   &region);                           // Regions
-  }
-
-  // Now, render the GUI.
-  // If draw data exists, we begin a new render pass and call ImGui::RenderDrawDataVK.
-  // This render pass takes m_guiCompositeImage and transitions it to layout TRANSFER_SRC_OPTIMAL, so if we don't call
-  // that render pass, we have to do the transition manually.
-
-  if(imguiDrawData)
-  {
-    VkRenderPassBeginInfo renderPassBeginInfo    = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-    renderPassBeginInfo.renderPass               = m_renderPassGUI;
-    renderPassBeginInfo.framebuffer              = m_guiFramebuffer;
-    renderPassBeginInfo.renderArea.offset.x      = 0;
-    renderPassBeginInfo.renderArea.offset.y      = 0;
-    renderPassBeginInfo.renderArea.extent.width  = winWidth;
-    renderPassBeginInfo.renderArea.extent.height = winHeight;
-    renderPassBeginInfo.clearValueCount          = 0;
-    renderPassBeginInfo.pClearValues             = nullptr;
-
-    vkCmdBeginRenderPass(cmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    vkCmdSetViewport(cmdBuffer, 0, 1, &m_viewportGUI);
-    vkCmdSetScissor(cmdBuffer, 0, 1, &m_scissorGUI);
-
-    ImGui_ImplVulkan_RenderDrawData(imguiDrawData, cmdBuffer);
-
-    vkCmdEndRenderPass(cmdBuffer);
-
-    // Since the render pass changed the layout and accesses, we have to tell the ImageAndView abstraction that
-    // these changed:
-    m_guiCompositeImage.currentLayout   = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    m_guiCompositeImage.currentAccesses = VK_ACCESS_TRANSFER_READ_BIT;
-  }
-  else
-  {
-    m_guiCompositeImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT);
-  }
-
-  // Finally, blit to the swapchain.
-  {
-    // Soundness check
-    assert(m_guiCompositeImage.c_width == winWidth);
-    assert(m_guiCompositeImage.c_height == winHeight);
-    VkImageBlit region               = {0};
-    region.dstOffsets[1].x           = winWidth;
-    region.dstOffsets[1].y           = winHeight;
-    region.dstOffsets[1].z           = 1;
-    region.srcOffsets[1].x           = winWidth;
-    region.srcOffsets[1].y           = winHeight;
-    region.srcOffsets[1].z           = 1;
-    region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.dstSubresource.layerCount = 1;
-    region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    region.srcSubresource.layerCount = 1;
-
-    cmdImageTransition(cmdBuffer, m_swapChain.getActiveImage(), VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-                       VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-    vkCmdBlitImage(cmdBuffer,                             // Command buffer
-                   m_guiCompositeImage.image.image,       // Source image
-                   m_guiCompositeImage.currentLayout,     // Source image layout
-                   m_swapChain.getActiveImage(),          // Destination image
+    const VkImageCopy region{.srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1},
+                             .dstSubresource = region.srcSubresource,
+                             .extent         = {m_viewportImage.getSize().width, m_viewportImage.getSize().height, 1}};
+    vkCmdCopyImage(cmd,                                   // Command buffer
+                   copySrcImage,                          // Source image
+                   copySrcLayout,                         // Source image layout
+                   m_viewportImage.getColorImage(),       // Destination image
                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  // Destination image layout
                    1,                                     // Number of regions
-                   &region,                               // Region
-                   VK_FILTER_NEAREST);                    // Filter
-
-    cmdImageTransition(cmdBuffer, m_swapChain.getActiveImage(), VK_IMAGE_ASPECT_COLOR_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-                       0, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+                   &region);                              // Regions
   }
+
+  // Transition m_viewportImage to VK_IMAGE_LAYOUT_GENERAL so that ImGui::Image() can use it.
+  nvvk::cmdImageMemoryBarrier(cmd, {.image            = m_viewportImage.getColorImage(),
+                                    .oldLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    .newLayout        = VK_IMAGE_LAYOUT_GENERAL,
+                                    .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                         .levelCount = VK_REMAINING_MIP_LEVELS,
+                                                         .layerCount = VK_REMAINING_ARRAY_LAYERS}});
 
   // Reset the layout of m_colorImage.
-  m_colorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
-
-  m_profilerVK.endSection(sec, cmdBuffer);
-
-  vkEndCommandBuffer(cmdBuffer);
-  m_submission.enqueue(cmdBuffer);
-}
-
-void Sample::submissionExecute(VkFence fence, bool useImageReadWait, bool useImageWriteSignals)
-{
-  if(useImageReadWait && m_submissionWaitForRead)
-  {
-    VkSemaphore semRead = m_swapChain.getActiveReadSemaphore();
-    if(semRead)
-    {
-      m_submission.enqueueWait(semRead, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-    }
-    m_submissionWaitForRead = false;
-  }
-
-  if(useImageWriteSignals)
-  {
-    VkSemaphore semWritten = m_swapChain.getActiveWrittenSemaphore();
-    if(semWritten)
-    {
-      m_submission.enqueueSignal(semWritten);
-    }
-  }
-
-  m_submission.execute(fence);
-}
-
-void Sample::think(double time)
-{
-  int    width          = m_windowState.m_swapSize[0];
-  int    height         = m_windowState.m_swapSize[1];
-  double frameStartTime = getTime();
-
-  // Create Dear ImGui interface
-  DoGUI(width, height, time);
-
-  // If elements of m_state change, this reinitializes parts of the renderer.
-  updateRendererImmediate(false, false);
-
-  // Begin frame
-  {
-    m_submissionWaitForRead = true;
-    m_ringFences.setCycleAndWait(m_frame);
-    m_ringCmdPool.setCycle(m_ringFences.getCycleIndex());
-  }
-
-  // Update camera
-  m_cameraControl.processActions(glm::ivec2(getWidth(), getHeight()),
-                                 glm::vec2(m_windowState.m_mouseCurrent[0], m_windowState.m_mouseCurrent[1]),
-                                 m_windowState.m_mouseButtonFlags, m_windowState.m_mouseWheel);
-
-  // Update the GPU's uniform buffer
-  updateUniformBuffer(m_swapChain.getActiveImageIndex(), frameStartTime);
-
-  // Record this frame's command buffer
-  VkCommandBuffer cmdBuffer = m_ringCmdPool.createCommandBuffer();
-  {
-    render(cmdBuffer);
-    NVVK_CHECK(vkEndCommandBuffer(cmdBuffer));
-    m_submission.enqueue(cmdBuffer);
-  }
-
-  // Render Dear ImGui and translate the internal image to the swapchain
-  {
-    ImGui::Render();
-    copyOffscreenToBackBuffer(width, height, ImGui::GetDrawData());
-  }
-
-  // End frame
-  {
-    submissionExecute(m_ringFences.getFence(), true, true);
-    m_frame++;
-    ImGui::EndFrame();
-    m_lastState = m_state;
-  }
+  m_colorImage.transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 }
 
 int main(int argc, const char** argv)
 {
-  NVPSystem system(PROJECT_NAME);
-
-  Sample sample;
-  sample.m_contextInfo.apiMajor = 1;
-  sample.m_contextInfo.apiMinor = 2;
-  sample.m_contextInfo.addDeviceExtension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
-  sample.m_contextInfo.addDeviceExtension(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME);
-  sample.m_contextInfo.addDeviceExtension(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
-  // Enable VK_KHR_maintenance4 so that the depth pass' fragment shader in
-  // loop32, which does not consume the interpolants from the vertex shader,
-  // does not produce a validation warning:
-  VkPhysicalDeviceMaintenance4Features m_maintenance4Features{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES,  // sType
-      nullptr,                                                   // pNext
-      VK_TRUE                                                    // maintenance4
-  };
-  sample.m_contextInfo.addDeviceExtension(VK_KHR_MAINTENANCE_4_EXTENSION_NAME, false, &m_maintenance4Features);
-
+  // Vulkan extensions
   // The extension below is optional - there are algorithms we can use if we have it, but
   // if the device doesn't support it, we don't allow the user to select those algorithms.
-  VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT m_fragmentShaderInterlockFeatures{
-      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT,  // sType
-      nullptr,                                                                   // pNext
-      VK_TRUE,                                                                   // fragmentShaderSampleInterlock
-      VK_TRUE,                                                                   // fragmentShaderPixelInterlock
-      VK_FALSE  // fragmentShaderShadingRateInterlock (we don't need this)
+  VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT fragmentShaderInterlockFeatures{
+      .sType                              = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT,
+      .fragmentShaderSampleInterlock      = VK_TRUE,
+      .fragmentShaderPixelInterlock       = VK_TRUE,
+      .fragmentShaderShadingRateInterlock = VK_FALSE  // (we don't need this)
   };
-  sample.m_contextInfo.addDeviceExtension(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, true, &m_fragmentShaderInterlockFeatures);
 
-  const int SAMPLE_WIDTH  = 1200;
-  const int SAMPLE_HEIGHT = 1024;
-  return sample.run(PROJECT_NAME, argc, argv, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+  nvvk::ContextInitInfo vkSetup{
+      .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+      .deviceExtensions   = {nvvk::ExtensionInfo{.extensionName = VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME},
+                             nvvk::ExtensionInfo{.extensionName = VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME},
+                             nvvk::ExtensionInfo{.extensionName = VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME},
+                             nvvk::ExtensionInfo{.extensionName = VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME,
+                                                 .feature       = &fragmentShaderInterlockFeatures,
+                                                 .required      = false}}};
+  // TODO: Headless mode
+  if(true)
+  {
+    nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+    vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  }
+
+  nvvk::Context vkContext;
+  // TODO: This should really be reducible to an NVVK_CHECK, which should
+  // also be enabled in release
+  if(VK_SUCCESS != vkContext.init(vkSetup))
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return EXIT_FAILURE;
+  }
+
+  // Window + main loop setup
+  nvapp::ApplicationCreateInfo appInfo{
+      .name           = PROJECT_NAME,
+      .instance       = vkContext.getInstance(),
+      .device         = vkContext.getDevice(),
+      .physicalDevice = vkContext.getPhysicalDevice(),
+      .queues         = vkContext.getQueueInfos(),
+      .windowSize     = {1600, 1024},
+#ifdef NDEBUG
+      .vSync = false,
+#else
+      .vSync = true,
+#endif
+      // This sets up the dock positions for the menus
+      .dockSetup =
+          [](ImGuiID viewportID) {
+            ImGuiID settingsID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Left, 0.2f, nullptr, nullptr);
+            ImGui::DockBuilderDockWindow(kUiPaneSettingsName, settingsID);
+            ImGuiID profilerID = ImGui::DockBuilderSplitNode(settingsID, ImGuiDir_Down, 0.25f, nullptr, nullptr);
+            ImGui::DockBuilderDockWindow(kUiPaneProfilerName, profilerID);
+          },
+  };
+  nvapp::Application app;
+  app.init(appInfo);
+
+  // Create the sample element and attach it to the GUI.
+  // It's easiest to pass the entire Context here, so that we can look up
+  // whether we got optional extensions in its `deviceExtensions` table.
+  app.addElement(std::make_shared<Sample>(&vkContext));
+  // Add an element that automatically updates the title with the current
+  // size and FPS.
+  app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>());
+
+  // Main loop
+  app.run();
+
+  // Teardown
+  app.deinit();
+  vkContext.deinit();
+
+  return EXIT_SUCCESS;
 }

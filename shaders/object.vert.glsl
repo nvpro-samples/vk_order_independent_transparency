@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2020-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2020-2021 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2025 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,13 +23,17 @@
 
 #include "shaderCommon.glsl"
 
-layout(location = 0) in Interpolants IN;
+layout(location = VERTEX_POS) in vec3 inPosition;
+layout(location = VERTEX_NORMAL) in vec3 inNormal;
+layout(location = VERTEX_COLOR) in vec4 inColor;
 
-layout(location = 0) out vec4 outColor;
+layout(location = 0) out Interpolants OUT;
 
 void main()
 {
-  vec3 color = IN.color.rgb * goochLighting(IN.normal);
-
-  outColor = vec4(color, 1.0f);
+  gl_Position = scene.projViewMatrix * vec4(inPosition, 1.0);
+  OUT.depth   = (scene.viewMatrix * vec4(inPosition, 1.0)).z;
+  OUT.pos     = inPosition;
+  OUT.normal  = inNormal;
+  OUT.color   = inColor;
 }

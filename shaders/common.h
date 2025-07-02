@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2020-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2020-2021 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2025 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -67,12 +67,13 @@
 // longer-lasting actions (helps when many layers are used)
 #define USE_EARLYDEPTH 1
 
-// SceneData Uniform Buffer Object
 #ifdef __cplusplus
-// Note: This assumes that <glm/glm.hpp> has already been included.
+#include <glm/glm.hpp>
+namespace shaderio {
 using namespace glm;  // Make glm::mat4 correspond to mat4, e.g.
-#endif                   // #ifdef __cplusplus
+#endif                // #ifdef __cplusplus
 
+// SceneData Uniform Buffer Object
 struct SceneData
 {
   // Vectors are multiplied on the right.
@@ -89,6 +90,10 @@ struct SceneData
   float alphaWidth;
   vec2  _pad1;
 };
+
+#ifdef __cplusplus
+}  // namespace shaderio
+#endif
 
 // GLSL-only code
 #ifndef __cplusplus

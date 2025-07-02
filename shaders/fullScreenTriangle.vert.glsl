@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2020-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,27 +13,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2020-2021 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2025 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
 #version 460
-#extension GL_GOOGLE_include_directive : enable
 
-#include "shaderCommon.glsl"
-
-layout(location = VERTEX_POS) in vec3 inPosition;
-layout(location = VERTEX_NORMAL) in vec3 inNormal;
-layout(location = VERTEX_COLOR) in vec4 inColor;
-
-layout(location = 0) out Interpolants OUT;
+// Draws a full-screen triangle.
+// This is used for full-screen passes over images,
+// such as during the resolve step.
+// We could also do this using a compute shader instead.
 
 void main()
 {
-  gl_Position = scene.projViewMatrix * vec4(inPosition, 1.0);
-  OUT.depth   = (scene.viewMatrix * vec4(inPosition, 1.0)).z;
-  OUT.pos     = inPosition;
-  OUT.normal  = inNormal;
-  OUT.color   = inColor;
+  // 0---^-----------2
+  // |   |   |     /
+  // <---.---|---/---> x+
+  // |   |   | /
+  // |-------/
+  // |   | /
+  // |   /
+  // | / |
+  // 1   V
+  //     y+
+  vec4 pos = vec4((float((gl_VertexIndex >> 1U) & 1U)) * 4.0 - 1.0, (float(gl_VertexIndex & 1U)) * 4.0 - 1.0, 0, 1.0);
+  gl_Position = pos;
 }
