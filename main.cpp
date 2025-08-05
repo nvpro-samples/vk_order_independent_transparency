@@ -105,10 +105,9 @@ void Sample::onAttach(nvapp::Application* app)
 
   // Configure shader system
   {
-    // TODO: Add more paths
-    m_shaderCompiler.addSearchPaths({std::filesystem::path("shaders"),     //
-                                     std::filesystem::path("../shaders"),  //
-                                     std::filesystem::path(PROJECT_EXE_TO_SOURCE_DIRECTORY) / "shaders"});
+    const std::filesystem::path exeDir = nvutils::getExecutablePath().parent_path();
+    m_shaderCompiler.addSearchPaths({exeDir / TARGET_NAME "_files/shaders",  // Install path
+                                     exeDir / TARGET_EXE_TO_SOURCE_DIRECTORY / "shaders"});
   }
 
   // Call cmdUpdateRendererFromState with forceRebuildAll = true to set up the rest of the renderer with the initial
@@ -799,17 +798,11 @@ int main(int argc, const char** argv)
   }
 
   nvvk::Context vkContext;
-  // TODO: This should really be reducible to an NVVK_CHECK, which should
-  // also be enabled in release
-  if(VK_SUCCESS != vkContext.init(vkSetup))
-  {
-    LOGE("Error in Vulkan context creation\n");
-    return EXIT_FAILURE;
-  }
+  NVVK_FAIL_RETURN(vkContext.init(vkSetup));
 
   // Window + main loop setup
   nvapp::ApplicationCreateInfo appInfo{
-      .name           = PROJECT_NAME,
+      .name           = TARGET_NAME,
       .instance       = vkContext.getInstance(),
       .device         = vkContext.getDevice(),
       .physicalDevice = vkContext.getPhysicalDevice(),
