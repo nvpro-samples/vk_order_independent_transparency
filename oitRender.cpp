@@ -107,7 +107,7 @@ void Sample::onRender(VkCommandBuffer cmd)
     // Bind the descriptor set (constant buffers, images)
     // Pipeline layout depends only on descriptor set layout.
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1,
-                            &m_descriptorPack.sets[m_app->getFrameCycleIndex()], 0, nullptr);
+                            m_descriptorPack.getSetPtr(m_app->getFrameCycleIndex()), 0, nullptr);
 
     // Draw all of the opaque objects
     if(numOpaque > 0)

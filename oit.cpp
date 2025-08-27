@@ -243,7 +243,7 @@ void Sample::createDescriptorSets()
   // We'll first specify the layout - in a reflectable way that we can use
   // later on as well. Then we'll create a descriptor pool, allocate
   // descriptor sets from that, and finally create a pipeline layout.
-  nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
+  nvvk::DescriptorBindings bindings;
 
   // Descriptors get assigned to a triplet (descriptor set index,
   // binding index, array index). So we have to let the descriptor
@@ -267,13 +267,13 @@ void Sample::createDescriptorSets()
   bindings.addBinding(IMG_WEIGHTED_COLOR, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
   bindings.addBinding(IMG_WEIGHTED_REVEAL, VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1, VK_SHADER_STAGE_FRAGMENT_BIT);
 
-  m_descriptorPack.initFromBindings(m_app->getDevice(), m_app->getFrameCycleSize());
+  NVVK_CHECK(m_descriptorPack.init(bindings, m_app->getDevice(), m_app->getFrameCycleSize()));
 
 // Set the descriptor sets' debug names.
 #ifdef _DEBUG
-  for(size_t i = 0; i < m_descriptorPack.sets.size(); i++)
+  for(size_t i = 0; i < m_descriptorPack.getSets().size(); i++)
   {
-    nvvk::DebugUtil::getInstance().setObjectName(m_descriptorPack.sets[i], "Descriptor Set " + std::to_string(i));
+    nvvk::DebugUtil::getInstance().setObjectName(m_descriptorPack.getSet(i), "Descriptor Set " + std::to_string(i));
   }
 #endif
 
@@ -281,7 +281,7 @@ void Sample::createDescriptorSets()
   // so the function is relatively simple.
   VkPipelineLayoutCreateInfo pipelineInfo{.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                           .setLayoutCount = 1,
-                                          .pSetLayouts    = &m_descriptorPack.layout};
+                                          .pSetLayouts    = m_descriptorPack.getLayoutPtr()};
   NVVK_CHECK(vkCreatePipelineLayout(m_app->getDevice(), &pipelineInfo, nullptr, &m_pipelineLayout));
 }
 
@@ -330,16 +330,15 @@ void Sample::updateAllDescriptorSets()
   const VkDescriptorBufferInfo oitABufferInfo{.buffer = m_oitABuffer.buffer.buffer, .offset = 0, .range = VK_WHOLE_SIZE};
 
   // Descriptor sets without the color buffer bound to the shader stage
-  nvvk::WriteSetContainer   updates;
-  nvvk::DescriptorBindings& bindings = m_descriptorPack.bindings;
+  nvvk::WriteSetContainer updates;
   for(uint32_t ring = 0; ring < totalDescriptorSets; ring++)
   {
-    updates.append(bindings.getWriteSet(UBO_SCENE, m_descriptorPack.sets[ring]), &uboBufferInfo[ring]);
+    updates.append(m_descriptorPack.makeWrite(UBO_SCENE, ring), &uboBufferInfo[ring]);
 
     if(m_state.algorithm == OIT_LOOP64)
     {
       // IMG_ABUFFER is a storage buffer
-      updates.append(bindings.getWriteSet(IMG_ABUFFER, m_descriptorPack.sets[ring]), &oitABufferInfo);
+      updates.append(m_descriptorPack.makeWrite(IMG_ABUFFER, ring), &oitABufferInfo);
     }
     else
     {
@@ -347,38 +346,38 @@ void Sample::updateAllDescriptorSets()
       // Vulkan, but a kind of texture in OpenGL).
       if(m_oitABuffer.view != VK_NULL_HANDLE)
       {
-        updates.append(bindings.getWriteSet(IMG_ABUFFER, m_descriptorPack.sets[ring]), &m_oitABuffer.view);
+        updates.append(m_descriptorPack.makeWrite(IMG_ABUFFER, ring), &m_oitABuffer.view);
       }
     }
 
     if(oitAuxInfo.imageView != VK_NULL_HANDLE)
     {
-      updates.append(bindings.getWriteSet(IMG_AUX, m_descriptorPack.sets[ring]), &oitAuxInfo);
+      updates.append(m_descriptorPack.makeWrite(IMG_AUX, ring), &oitAuxInfo);
     }
 
     if(oitAuxSpinInfo.imageView != VK_NULL_HANDLE)
     {
-      updates.append(bindings.getWriteSet(IMG_AUXSPIN, m_descriptorPack.sets[ring]), &oitAuxSpinInfo);
+      updates.append(m_descriptorPack.makeWrite(IMG_AUXSPIN, ring), &oitAuxSpinInfo);
     }
 
     if(oitAuxDepthInfo.imageView != VK_NULL_HANDLE)
     {
-      updates.append(bindings.getWriteSet(IMG_AUXDEPTH, m_descriptorPack.sets[ring]), &oitAuxDepthInfo);
+      updates.append(m_descriptorPack.makeWrite(IMG_AUXDEPTH, ring), &oitAuxDepthInfo);
     }
 
     if(oitCounterInfo.imageView != VK_NULL_HANDLE)
     {
-      updates.append(bindings.getWriteSet(IMG_COUNTER, m_descriptorPack.sets[ring]), &oitCounterInfo);
+      updates.append(m_descriptorPack.makeWrite(IMG_COUNTER, ring), &oitCounterInfo);
     }
 
     if(oitWeightedColorInfo.imageView != VK_NULL_HANDLE)
     {
-      updates.append(bindings.getWriteSet(IMG_WEIGHTED_COLOR, m_descriptorPack.sets[ring]), &oitWeightedColorInfo);
+      updates.append(m_descriptorPack.makeWrite(IMG_WEIGHTED_COLOR, ring), &oitWeightedColorInfo);
     }
 
     if(oitWeightedRevealInfo.imageView != VK_NULL_HANDLE)
     {
-      updates.append(bindings.getWriteSet(IMG_WEIGHTED_REVEAL, m_descriptorPack.sets[ring]), &oitWeightedRevealInfo);
+      updates.append(m_descriptorPack.makeWrite(IMG_WEIGHTED_REVEAL, ring), &oitWeightedRevealInfo);
     }
   }
 
