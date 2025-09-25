@@ -271,7 +271,7 @@ void Sample::createDescriptorSets()
 
 // Set the descriptor sets' debug names.
 #ifdef _DEBUG
-  for(size_t i = 0; i < m_descriptorPack.getSets().size(); i++)
+  for(uint32_t i = 0; i < static_cast<uint32_t>(m_descriptorPack.getSets().size()); i++)
   {
     nvvk::DebugUtil::getInstance().setObjectName(m_descriptorPack.getSet(i), "Descriptor Set " + std::to_string(i));
   }

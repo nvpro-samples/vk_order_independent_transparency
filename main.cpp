@@ -40,8 +40,10 @@
 #include "oit.h"
 
 #include <nvapp/elem_default_title.hpp>
+#include <nvapp/elem_sequencer.hpp>
 #include <nvutils/file_operations.hpp>
 #include <nvutils/logger.hpp>
+#include <nvutils/parameter_sequencer.hpp>
 #include <nvvk/context.hpp>
 #include <nvvk/staging.hpp>
 
@@ -770,8 +772,36 @@ void Sample::copyOffscreenToBackBuffer(VkCommandBuffer cmd)
   m_colorImage.transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 }
 
-int main(int argc, const char** argv)
+int main(int argc, char* argv[])
 {
+  // Basic app info; we'll complete the rest after argument parsing.
+  nvapp::ApplicationCreateInfo appInfo{
+      .name       = TARGET_NAME,
+      .windowSize = {1600, 1024},
+#ifdef NDEBUG
+      .vSync = false,
+#else
+      .vSync = true,
+#endif
+      // This sets up the dock positions for the menus
+      .dockSetup =
+          [](ImGuiID viewportID) {
+            ImGuiID settingsID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Left, 0.2f, nullptr, nullptr);
+            ImGui::DockBuilderDockWindow(kUiPaneSettingsName, settingsID);
+            ImGuiID profilerID = ImGui::DockBuilderSplitNode(settingsID, ImGuiDir_Down, 0.25f, nullptr, nullptr);
+            ImGui::DockBuilderDockWindow(kUiPaneProfilerName, profilerID);
+          },
+  };
+
+
+  // Detect if we're in automated test mode.
+  nvutils::ParameterSequencer::InitInfo sequencerInfo;
+  nvutils::ParameterRegistry            parameterRegistry;
+  nvutils::ParameterParser              parameterParser;
+  parameterParser.add(parameterRegistry.addVector({.name = "windowSize"}, &appInfo.windowSize));
+  sequencerInfo.registerScriptParameters(parameterRegistry, parameterParser);
+  parameterParser.parse(argc, argv);
+
   // Vulkan extensions
   // The extension below is optional - there are algorithms we can use if we have it, but
   // if the device doesn't support it, we don't allow the user to select those algorithms.
@@ -790,8 +820,20 @@ int main(int argc, const char** argv)
                              nvvk::ExtensionInfo{.extensionName = VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME,
                                                  .feature       = &fragmentShaderInterlockFeatures,
                                                  .required      = false}}};
-  // TODO: Headless mode
-  if(true)
+  // When in test mode, enable validation
+  bool allTestsOk = true;
+  if(sequencerInfo.hasScript())
+  {
+    vkSetup.enableValidationLayers = true;
+    // Add a custom hook to make validation errors fatal:
+    nvutils::Logger::getInstance().setLogCallback([&](nvutils::Logger::LogLevel level, const std::string& message) {
+      if(level == nvutils::Logger::LogLevel::eERROR)
+      {
+        allTestsOk = false;
+      }
+    });
+  }
+  else  // When not in test mode, enable swapchain
   {
     nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
     vkSetup.deviceExtensions.emplace_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -801,37 +843,57 @@ int main(int argc, const char** argv)
   NVVK_FAIL_RETURN(vkContext.init(vkSetup));
 
   // Window + main loop setup
-  nvapp::ApplicationCreateInfo appInfo{
-      .name           = TARGET_NAME,
-      .instance       = vkContext.getInstance(),
-      .device         = vkContext.getDevice(),
-      .physicalDevice = vkContext.getPhysicalDevice(),
-      .queues         = vkContext.getQueueInfos(),
-      .windowSize     = {1600, 1024},
-#ifdef NDEBUG
-      .vSync = false,
-#else
-      .vSync = true,
-#endif
-      // This sets up the dock positions for the menus
-      .dockSetup =
-          [](ImGuiID viewportID) {
-            ImGuiID settingsID = ImGui::DockBuilderSplitNode(viewportID, ImGuiDir_Left, 0.2f, nullptr, nullptr);
-            ImGui::DockBuilderDockWindow(kUiPaneSettingsName, settingsID);
-            ImGuiID profilerID = ImGui::DockBuilderSplitNode(settingsID, ImGuiDir_Down, 0.25f, nullptr, nullptr);
-            ImGui::DockBuilderDockWindow(kUiPaneProfilerName, profilerID);
-          },
-  };
+  appInfo.instance           = vkContext.getInstance();
+  appInfo.device             = vkContext.getDevice();
+  appInfo.physicalDevice     = vkContext.getPhysicalDevice();
+  appInfo.queues             = vkContext.getQueueInfos();
+  appInfo.headless           = sequencerInfo.hasScript();  // When in test mode, run without a swapchain
+  appInfo.headlessFrameCount = 0xFFFF'FFFF;                // Sequence file will make the app exit
   nvapp::Application app;
   app.init(appInfo);
 
   // Create the sample element and attach it to the GUI.
   // It's easiest to pass the entire Context here, so that we can look up
   // whether we got optional extensions in its `deviceExtensions` table.
-  app.addElement(std::make_shared<Sample>(&vkContext));
+  std::shared_ptr<Sample> sample = std::make_shared<Sample>(&vkContext);
+  app.addElement(sample);
   // Add an element that automatically updates the title with the current
   // size and FPS.
   app.addElement(std::make_shared<nvapp::ElementDefaultWindowTitle>());
+
+  // If we're in test mode, then we'll also add an element that will change
+  // settings and save an image every frame.
+  if(sequencerInfo.hasScript())
+  {
+    // We reuse the parameter registry to parse arguments.
+    State& state = sample->m_state;
+    parameterRegistry.add({.name = "algorithm"}, &state.algorithm);
+    parameterRegistry.add({.name = "oitLayers"}, &state.oitLayers);
+    parameterRegistry.add({.name = "linkedListAllocatedPerElement"}, &state.linkedListAllocatedPerElement);
+    parameterRegistry.add({.name = "percentTransparent"}, &state.percentTransparent);
+    parameterRegistry.add({.name = "tailBlend"}, &state.tailBlend);
+    parameterRegistry.add({.name = "interlockIsOrdered"}, &state.interlockIsOrdered);
+    parameterRegistry.add({.name = "numObjects"}, &state.numObjects);
+    parameterRegistry.add({.name = "subdiv"}, &state.subdiv);
+    parameterRegistry.add({.name = "scaleMin"}, &state.scaleMin);
+    parameterRegistry.add({.name = "scaleWidth"}, &state.scaleWidth);
+    parameterRegistry.add({.name = "aaType"}, &state.aaType);
+    parameterParser.add(parameterRegistry);
+
+    sequencerInfo.sequenceFrameCount = 1;
+    sequencerInfo.parameterParser    = &parameterParser;
+    sequencerInfo.parameterRegistry  = &parameterRegistry;
+    sequencerInfo.postCallbacks.push_back([&sample](const nvutils::ParameterSequencer::State& sequence) {
+      LOGI("Finished %d: %s\n", sequence.index, sequence.description.c_str());
+      nvvk::GBuffer& image = sample->m_viewportImage;
+      sample->m_app->saveImageToFile(image.getColorImage(), image.getSize(),
+                                     nvutils::getExecutablePath().replace_extension(sequence.description + ".png"));
+      // Reset for the next test case
+      sample->m_state = {};
+    });
+
+    app.addElement(std::make_shared<nvapp::ElementSequencer>(sequencerInfo));
+  }
 
   // Main loop
   app.run();
@@ -840,5 +902,5 @@ int main(int argc, const char** argv)
   app.deinit();
   vkContext.deinit();
 
-  return EXIT_SUCCESS;
+  return allTestsOk ? EXIT_SUCCESS : EXIT_FAILURE;
 }

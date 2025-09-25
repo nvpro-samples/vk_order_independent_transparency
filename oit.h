@@ -74,7 +74,6 @@ struct State
   float    scaleMin                      = 0.1f;
   float    scaleWidth                    = 0.9f;
   uint32_t aaType                        = AA_NONE;
-  bool     drawUI                        = true;
 
   // These are implicitly set by aaType:
   int  msaa          = 1;      // Number of MSAA samples used for color + depth buffers.
