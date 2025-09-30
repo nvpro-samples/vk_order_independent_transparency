@@ -77,6 +77,7 @@ void Sample::onAttach(nvapp::Application* app)
 
   // Camera
   m_cameraControl = std::make_shared<nvutils::CameraManipulator>();
+  m_cameraControl->setFov(45.0f);
   m_cameraElement = std::make_shared<nvapp::ElementCamera>();
   m_cameraElement->setCameraManipulator(m_cameraControl);
   m_app->addElement(m_cameraElement);
@@ -624,12 +625,10 @@ VkExtent2D Sample::getViewportSize() const
 void Sample::updateUniformBuffer(uint32_t currentImage, double time)
 {
   // TODO: This can be changed to all be push constants!
-  const uint32_t width       = m_colorImage.getWidth();
-  const uint32_t height      = m_colorImage.getHeight();
-  const float    aspectRatio = static_cast<float>(width) / static_cast<float>(height);
-  glm::mat4      projection  = glm::perspectiveRH_ZO(glm::radians(45.0f), aspectRatio, 0.01f, 50.0f);
-  projection[1][1] *= -1;
-  glm::mat4 view = m_cameraControl->getViewMatrix();
+  const uint32_t width      = m_colorImage.getWidth();
+  const uint32_t height     = m_colorImage.getHeight();
+  glm::mat4      projection = m_cameraControl->getPerspectiveMatrix();
+  glm::mat4      view       = m_cameraControl->getViewMatrix();
 
   m_sceneUbo.projViewMatrix             = projection * view;
   m_sceneUbo.viewMatrix                 = view;
@@ -638,7 +637,9 @@ void Sample::updateUniformBuffer(uint32_t currentImage, double time)
   m_sceneUbo.viewport = glm::ivec3(width, height, width * height);
 
   memcpy(m_uniformBuffers[currentImage].mapping, &m_sceneUbo, sizeof(m_sceneUbo));
-  // TODO: Issue CPU -> GPU pipeline barrier
+  // We don't need a pipeline barrier here because of the Host Write Ordering
+  // Guarantees section of the Vulkan specification,
+  // https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#synchronization-submission-host-writes .
 }
 
 void Sample::copyOffscreenToBackBuffer(VkCommandBuffer cmd)

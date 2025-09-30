@@ -270,7 +270,7 @@ void Sample::createDescriptorSets()
   NVVK_CHECK(m_descriptorPack.init(bindings, m_app->getDevice(), m_app->getFrameCycleSize()));
 
 // Set the descriptor sets' debug names.
-#ifdef _DEBUG
+#ifndef _NDEBUG
   for(uint32_t i = 0; i < static_cast<uint32_t>(m_descriptorPack.getSets().size()); i++)
   {
     nvvk::DebugUtil::getInstance().setObjectName(m_descriptorPack.getSet(i), "Descriptor Set " + std::to_string(i));
