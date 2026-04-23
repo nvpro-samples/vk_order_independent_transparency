@@ -532,7 +532,7 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
   VkPipelineDepthStencilStateCreateInfo depthStencilState{.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
                                                           .depthTestEnable = true,
                                                           .depthCompareOp  = VK_COMPARE_OP_LESS};
-  std::array<VkPipelineColorBlendAttachmentState, 2> blendAttachments{};
+  std::vector<VkPipelineColorBlendAttachmentState> blendAttachments{};
   VkPipelineColorBlendStateCreateInfo blendInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
                                                 .attachmentCount = 1,  // This can be modified below
                                                 .pAttachments    = blendAttachments.data()};
@@ -541,26 +541,25 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
   const VkFormat depthFormat = m_depthImage.getFormat();
 
   // For WEIGHTED_COLOR blend mode we have 2 color attachments, otherwise 1
-  const uint32_t colorAttachmentCount = (blendMode == BlendMode::WEIGHTED_COLOR) ? 2 : 1;
+  //const uint32_t colorAttachmentCount = (blendMode == BlendMode::WEIGHTED_COLOR) ? 2 : 1;
+  uint32_t colorAttachmentCount = 1;
 
-  std::vector<VkFormat> colorFormats =
-  {
-    colorFormat,
-  };
+  std::vector<VkFormat> colorFormats ={ colorFormat, };
 
-  if (blendMode == BlendMode::WEIGHTED_COLOR)
+  if (blendMode == BlendMode::WEIGHTED_COLOR || blendMode == BlendMode::WEIGHTED_COMPOSITE)
   {
     colorFormats =
     {
       m_oitWeightedColorFormat,
-      m_oitWeightedRevealFormat
+      m_oitWeightedRevealFormat,
+      colorFormat
     };
   }
 
   const VkPipelineRenderingCreateInfo renderingInfo
   {
     .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-    .colorAttachmentCount    = colorAttachmentCount,
+    .colorAttachmentCount    = (uint32_t) colorFormats.size(),
     .pColorAttachmentFormats = colorFormats.data(),
     .depthAttachmentFormat   = depthFormat,
   };
@@ -573,54 +572,64 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
     case BlendMode::NONE:
       // Test and write to depth
       depthStencilState.depthWriteEnable = true;
-      blendAttachments[0] = VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = allBits};
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = allBits});
       // Leave blending disabled
       break;
     case BlendMode::PREMULTIPLIED:
       // Test but don't write to depth
       depthStencilState.depthWriteEnable = false;
-      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+      blendAttachments.push_back(                 VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
                                                                                .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
                                                                                .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
                                                                                .colorBlendOp        = VK_BLEND_OP_ADD,
                                                                                .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
                                                                                .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .colorWriteMask = allBits};
+                                                                               .colorWriteMask = allBits});
       break;
     case BlendMode::WEIGHTED_COLOR:
       // Test but don't write to depth
       depthStencilState.depthWriteEnable = false;
       blendInfo.attachmentCount          = 2;
-      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+      // Pass 1: Write to 0 and 1, leave 2 alone.
+      depthStencilState.depthWriteEnable = false;
+      blendInfo.attachmentCount          = 3;
+      blendAttachments.push_back(               VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
                                                                                .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
                                                                                .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
                                                                                .colorBlendOp        = VK_BLEND_OP_ADD,
                                                                                .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
                                                                                .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .colorWriteMask      = allBits};
-      blendAttachments[1]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                               .colorWriteMask      = allBits});
+      blendAttachments.push_back(               VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
                                                                                .srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
                                                                                .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
                                                                                .colorBlendOp        = VK_BLEND_OP_ADD,
                                                                                .srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
                                                                                .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .colorWriteMask = allBits};
+                                                                               .colorWriteMask      = allBits});
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
+    break;
       break;
     case BlendMode::WEIGHTED_COMPOSITE:
       // Test but don't write to depth
       depthStencilState.depthWriteEnable = false;
-      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable = VK_TRUE,
+      blendInfo.attachmentCount          = 3;
+      blendAttachments.push_back(                 VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
+      blendAttachments.push_back(                               VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0} );
+      blendAttachments.push_back(              VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
                                                                                .srcColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
                                                                                .dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
                                                                                .colorBlendOp        = VK_BLEND_OP_ADD,
                                                                                .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
                                                                                .dstAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-                                                                               .colorWriteMask      = allBits};
+                                                                               .colorWriteMask      = allBits});
       break;
     default:
       assert(!"Blend mode configuration not implemented!");
       break;
   }
+
+  blendInfo.pAttachments = blendAttachments.data();
 
   const VkGraphicsPipelineCreateInfo info{.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
                                           .pNext               = &renderingInfo,

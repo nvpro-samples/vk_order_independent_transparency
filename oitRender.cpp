@@ -461,7 +461,7 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
       .pNext = nullptr,
       .imageView = m_colorImage.getView(),
       .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
       .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
       .clearValue = clearValues[0],
     }
@@ -480,9 +480,9 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
   {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
-    .imageView = m_colorImage.getView(),
-    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .imageView = m_depthImage.getView(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     .clearValue = clearValues[1],
   };
@@ -492,6 +492,8 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
   {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
+    .renderArea = {.extent = {.width  = m_colorImage.getWidth(), .height = m_colorImage.getHeight()}},
+    .layerCount = 1,
     .colorAttachmentCount = (uint32_t) colorInfo.size(),
     .pColorAttachments = colorInfo.data(),
     .pDepthAttachment  = &depthInfo,
