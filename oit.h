@@ -175,9 +175,7 @@ public:
   // We have one of these per frame since the CPU can be uploading to one while
   // the other is being used for rendering.
   std::vector<nvvk::Buffer> m_uniformBuffers;
-  // We only need one of each of these resources, since only one draw operation will run at once.
-  VkFramebuffer m_mainColorDepthFramebuffer = VK_NULL_HANDLE;
-  VkFramebuffer m_weightedFramebuffer       = VK_NULL_HANDLE;
+
   ImageAndView  m_depthImage;
   ImageAndView  m_colorImage;
   BufferAndView m_oitABuffer;
@@ -422,5 +420,5 @@ public:
   // and is an approximate technique; instead, it uses two intermediate render
   // targets, which we implement using a render pass (see the creation of the
   // render pass for more information as to how that's set up).
-  void drawTransparentWeighted(VkCommandBuffer& cmdBuffer, int numObjects);
+  void drawTransparentWeighted(VkCommandBuffer& cmdBuffer , int numObjects);
 };

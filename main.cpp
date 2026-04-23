@@ -224,7 +224,7 @@ void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuil
 
     if(renderPassesNeedReinit)
     {
-      createRenderPasses();
+      //createRenderPasses();
     }
 
     if(framebuffersAndDescriptorsNeedReinit)
@@ -416,59 +416,61 @@ void Sample::initScene()
   uploader.deinit();
 }
 
-void Sample::destroyFramebuffers()
-{
-  vkDestroyFramebuffer(m_app->getDevice(), m_mainColorDepthFramebuffer, nullptr);
-  m_mainColorDepthFramebuffer = VK_NULL_HANDLE;
-
-  if(m_weightedFramebuffer != VK_NULL_HANDLE)
-  {
-    vkDestroyFramebuffer(m_app->getDevice(), m_weightedFramebuffer, nullptr);
-    m_weightedFramebuffer = VK_NULL_HANDLE;
-  }
-}
+ void Sample::destroyFramebuffers()
+ {
+//   vkDestroyFramebuffer(m_app->getDevice(), m_mainColorDepthFramebuffer, nullptr);
+//   m_mainColorDepthFramebuffer = VK_NULL_HANDLE;
+//
+//   if(m_weightedFramebuffer != VK_NULL_HANDLE)
+//   {
+//     vkDestroyFramebuffer(m_app->getDevice(), m_weightedFramebuffer, nullptr);
+//     m_weightedFramebuffer = VK_NULL_HANDLE;
+//   }
+ }
 
 void Sample::createFramebuffers()
 {
-  destroyFramebuffers();
-  // TODO: Remove and replace with dynamic rendering
-
-  // Color + depth offscreen framebuffer
-  {
-    const std::array<VkImageView, 2> attachments{m_colorImage.getView(), m_depthImage.getView()};
-    const VkFramebufferCreateInfo    fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-                                            .renderPass      = m_renderPassColorDepthClear,
-                                            .attachmentCount = static_cast<uint32_t>(attachments.size()),
-                                            .pAttachments    = attachments.data(),
-                                            .width           = m_colorImage.getWidth(),
-                                            .height          = m_colorImage.getHeight(),
-                                            .layers          = 1};
-
-    NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, NULL, &m_mainColorDepthFramebuffer));
-    NVVK_DBG_NAME(m_mainColorDepthFramebuffer);
-  }
-
-  // Weighted color + weighted reveal framebuffer (for Weighted, Blended
-  // Order-Independent Transparency). See the render pass description for more info.
-  if(m_state.algorithm == OIT_WEIGHTED)
-  {
-    const std::array<VkImageView, 4> attachments{m_oitWeightedColorImage.getView(),   //
-                                                 m_oitWeightedRevealImage.getView(),  //
-                                                 m_colorImage.getView(),              //
-                                                 m_depthImage.getView()};
-
-    const VkFramebufferCreateInfo fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-                                         .renderPass      = m_renderPassWeighted,
-                                         .attachmentCount = static_cast<uint32_t>(attachments.size()),
-                                         .pAttachments    = attachments.data(),
-                                         .width           = m_oitWeightedColorImage.getWidth(),
-                                         .height          = m_oitWeightedColorImage.getHeight(),
-                                         .layers          = 1};
-
-    NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, nullptr, &m_weightedFramebuffer));
-    NVVK_DBG_NAME(m_weightedFramebuffer);
-  }
+  // destroyFramebuffers();
+  // // TODO: Remove and replace with dynamic rendering
+  //
+  // // Color + depth offscreen framebuffer
+  // {
+  //   const std::array<VkImageView, 2> attachments{m_colorImage.getView(), m_depthImage.getView()};
+  //   const VkFramebufferCreateInfo    fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+  //                                           .renderPass      = m_renderPassColorDepthClear,
+  //                                           .attachmentCount = static_cast<uint32_t>(attachments.size()),
+  //                                           .pAttachments    = attachments.data(),
+  //                                           .width           = m_colorImage.getWidth(),
+  //                                           .height          = m_colorImage.getHeight(),
+  //                                           .layers          = 1};
+  //
+  //   NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, NULL, &m_mainColorDepthFramebuffer));
+  //   NVVK_DBG_NAME(m_mainColorDepthFramebuffer);
+  // }
+  //
+  // // Weighted color + weighted reveal framebuffer (for Weighted, Blended
+  // // Order-Independent Transparency). See the render pass description for more info.
+  // if(m_state.algorithm == OIT_WEIGHTED)
+  // {
+  //   const std::array<VkImageView, 4> attachments{m_oitWeightedColorImage.getView(),   //
+  //                                                m_oitWeightedRevealImage.getView(),  //
+  //                                                m_colorImage.getView(),              //
+  //                                                m_depthImage.getView()};
+  //
+  //   const VkFramebufferCreateInfo fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+  //                                        .renderPass      = m_renderPassWeighted,
+  //                                        .attachmentCount = static_cast<uint32_t>(attachments.size()),
+  //                                        .pAttachments    = attachments.data(),
+  //                                        .width           = m_oitWeightedColorImage.getWidth(),
+  //                                        .height          = m_oitWeightedColorImage.getHeight(),
+  //                                        .layers          = 1};
+  //
+  //   NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, nullptr, &m_weightedFramebuffer));
+  //   NVVK_DBG_NAME(m_weightedFramebuffer);
+  // }
 }
+
+#pragma optimize("", off)
 
 VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                           const VkShaderModule vertShaderModule,
@@ -535,6 +537,35 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                                 .attachmentCount = 1,  // This can be modified below
                                                 .pAttachments    = blendAttachments.data()};
 
+  const VkFormat colorFormat = m_colorImage.getFormat();
+  const VkFormat depthFormat = m_depthImage.getFormat();
+
+  // For WEIGHTED_COLOR blend mode we have 2 color attachments, otherwise 1
+  const uint32_t colorAttachmentCount = (blendMode == BlendMode::WEIGHTED_COLOR) ? 2 : 1;
+
+  std::vector<VkFormat> colorFormats =
+  {
+    colorFormat,
+  };
+
+  if (blendMode == BlendMode::WEIGHTED_COLOR)
+  {
+    colorFormats =
+    {
+      m_oitWeightedColorFormat,
+      m_oitWeightedRevealFormat
+    };
+  }
+
+  const VkPipelineRenderingCreateInfo renderingInfo
+  {
+    .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+    .colorAttachmentCount    = colorAttachmentCount,
+    .pColorAttachmentFormats = colorFormats.data(),
+    .depthAttachmentFormat   = depthFormat,
+  };
+
+
   constexpr VkColorComponentFlags allBits =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
   switch(blendMode)
@@ -592,6 +623,7 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
   }
 
   const VkGraphicsPipelineCreateInfo info{.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                                          .pNext               = &renderingInfo,
                                           .stageCount          = uint32_t(stages.size()),
                                           .pStages             = stages.data(),
                                           .pVertexInputState   = &vertexInput,
@@ -602,7 +634,7 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                           .pDepthStencilState  = &depthStencilState,
                                           .pColorBlendState    = &blendInfo,
                                           .layout              = m_pipelineLayout,
-                                          .renderPass          = renderPass,
+                                          .renderPass          = nullptr,
                                           .subpass             = subpass};
 
   VkPipeline pipeline = VK_NULL_HANDLE;
@@ -813,11 +845,19 @@ int main(int argc, char* argv[])
       .fragmentShaderShadingRateInterlock = VK_FALSE  // (we don't need this)
   };
 
+  VkPhysicalDeviceDynamicRenderingLocalReadFeatures dynamicRenderingFeatures{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR,
+    .pNext = nullptr,
+    .dynamicRenderingLocalRead = VK_TRUE
+  };
+
   nvvk::ContextInitInfo vkSetup{
       .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
       .deviceExtensions   = {nvvk::ExtensionInfo{.extensionName = VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME},
                              nvvk::ExtensionInfo{.extensionName = VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME},
                              nvvk::ExtensionInfo{.extensionName = VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME},
+                             nvvk::ExtensionInfo{.extensionName = VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME},
+                             nvvk::ExtensionInfo{.extensionName = VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME},
                              nvvk::ExtensionInfo{.extensionName = VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME,
                                                  .feature       = &fragmentShaderInterlockFeatures,
                                                  .required      = false}}};

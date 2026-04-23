@@ -90,14 +90,47 @@ void Sample::onRender(VkCommandBuffer cmd)
     clearValues[0].color                    = {0.2f, 0.2f, 0.2f, 0.2f};  // Background color, in linear space
     clearValues[1].depthStencil             = {1.0f, 0};                 // Clear depth
 
-    const VkRenderPassBeginInfo renderPassInfo{.sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-                                               .renderPass  = m_renderPassColorDepthClear,
-                                               .framebuffer = m_mainColorDepthFramebuffer,
-                                               .renderArea = {.extent = {m_colorImage.getWidth(), m_colorImage.getHeight()}},
-                                               .clearValueCount = uint32_t(clearValues.size()),
-                                               .pClearValues    = clearValues.data()};
+    //Attachment Info for Dynamic rendering
+    VkRenderingAttachmentInfo colorAttachmentInfo =
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_colorImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      .clearValue = clearValues[0],
+    };
 
-    vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    VkRenderingAttachmentInfo depthAttachmentInfo =
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_depthImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      .clearValue = clearValues[1],
+    };
+
+    // Dynamic rendering info
+    VkRenderingInfo render_info = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+    render_info.renderArea          = {.extent = {m_colorImage.getWidth(), m_colorImage.getHeight()}},
+    render_info.layerCount          = 1;
+    render_info.colorAttachmentCount = 1;
+    render_info.pColorAttachments   = &colorAttachmentInfo;
+    render_info.pDepthAttachment    = &depthAttachmentInfo;
+
+    // const VkRenderPassBeginInfo renderPassInfo{.sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+    //                                            .renderPass  = m_renderPassColorDepthClear,
+    //                                            .framebuffer = m_mainColorDepthFramebuffer,
+    //                                            .renderArea = {.extent = {m_colorImage.getWidth(), m_colorImage.getHeight()}},
+    //                                            .clearValueCount = uint32_t(clearValues.size()),
+    //                                            .pClearValues    = clearValues.data()};
+
+    //TODO: Change this to start and below to end dynamic rendering
+    vkCmdBeginRendering(cmd, &render_info);
+    //vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     // Bind the vertex and index buffers
     const VkDeviceSize offset = 0;
@@ -147,7 +180,8 @@ void Sample::onRender(VkCommandBuffer cmd)
         assert(!"Algorithm case not called in switch statement!");
     }
 
-    vkCmdEndRenderPass(cmd);
+    //vkCmdEndRenderPass(cmd);
+    vkCmdEndRendering(cmd);
   }
 
   copyOffscreenToBackBuffer(cmd);
@@ -384,7 +418,8 @@ void Sample::drawTransparentLock(VkCommandBuffer& cmd, int numObjects, bool useI
 void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
 {
   // Swap out the render pass for WBOIT's render pass
-  vkCmdEndRenderPass(cmd);
+  //vkCmdEndRenderPass(cmd);
+  vkCmdEndRendering(cmd);
 
   auto section = m_profilerGPU.cmdFrameSection(cmd, "WeightedBlendedOIT");
 
@@ -395,15 +430,75 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
   clearValues[0].color = VkClearColorValue{.float32 = {0.0f, 0.0f, 0.0f, 0.0f}};
   // Initially, all pixels show through all the way (reveal = 100%)
   clearValues[1].color = VkClearColorValue{.float32 = {1.0f}};
-  const VkRenderPassBeginInfo renderPassInfo{.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-                                             .renderPass      = m_renderPassWeighted,
-                                             .framebuffer     = m_weightedFramebuffer,
-                                             .renderArea      = {.extent = {.width  = m_oitWeightedColorImage.getWidth(),
-                                                                            .height = m_oitWeightedColorImage.getHeight()}},
-                                             .clearValueCount = uint32_t(clearValues.size()),
-                                             .pClearValues    = clearValues.data()};
 
-  vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+  std::array<VkRenderingAttachmentInfo,3> colorInfo =
+  {{
+    //Image 0
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_oitWeightedColorImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      .clearValue = clearValues[0],
+    },
+
+    //Image 1
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_oitWeightedRevealImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      .clearValue = clearValues[1],
+   },
+
+    //Frame image
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_colorImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      .clearValue = clearValues[0],
+    }
+  }};
+
+  // const VkRenderPassBeginInfo renderPassInfo{.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+  //                                            .renderPass      = m_renderPassWeighted,
+  //                                            .framebuffer     = m_weightedFramebuffer,
+  //                                            .renderArea      = {.extent = {.width  = m_oitWeightedColorImage.getWidth(),
+  //                                                                           .height = m_oitWeightedColorImage.getHeight()}},
+  //                                            .clearValueCount = uint32_t(clearValues.size()),
+  //                                            .pClearValues    = clearValues.data()};
+
+  //Depth Image
+  VkRenderingAttachmentInfo depthInfo =
+  {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = m_colorImage.getView(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    .clearValue = clearValues[1],
+  };
+
+
+  VkRenderingInfo renderInfo =
+  {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .colorAttachmentCount = (uint32_t) colorInfo.size(),
+    .pColorAttachments = colorInfo.data(),
+    .pDepthAttachment  = &depthInfo,
+  };
+
+  //vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+  vkCmdBeginRendering(cmd, &renderInfo);
 
   // COLOR PASS
   // Computes the weighted sum and reveal factor.
@@ -414,7 +509,24 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
   }
 
   // Move to the next subpass
-  vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+  //vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
+
+  //Add a barrier so the next stage can read the pass
+  VkMemoryBarrier2KHR memoryBarrier{};
+  memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR;
+  memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+  memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+  memoryBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+  memoryBarrier.dstAccessMask = VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT;
+
+  VkDependencyInfoKHR dependencyInfo{};
+  dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
+  dependencyInfo.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+  dependencyInfo.memoryBarrierCount = 1;
+  dependencyInfo.pMemoryBarriers = &memoryBarrier;
+
+  vkCmdPipelineBarrier2(cmd, &dependencyInfo);
+
   // COMPOSITE PASS
   // Averages out the summed colors (in some sense) to get the final transparent color.
   {
