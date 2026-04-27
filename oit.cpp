@@ -321,7 +321,7 @@ void Sample::updateAllDescriptorSets()
 
   const VkDescriptorImageInfo oitWeightedColorInfo = {.sampler     = VK_NULL_HANDLE,
                                                       .imageView   = m_oitWeightedColorImage.getView(),
-                                                      .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+                                                      .imageLayout = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR};
 
   VkDescriptorImageInfo oitWeightedRevealInfo = oitWeightedColorInfo;
   oitWeightedRevealInfo.imageView             = m_oitWeightedRevealImage.getView();

@@ -419,107 +419,140 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
 {
   // Swap out the render pass for WBOIT's render pass
   //vkCmdEndRenderPass(cmd);
+  // End the opaque rendering block
   vkCmdEndRendering(cmd);
 
   auto section = m_profilerGPU.cmdFrameSection(cmd, "WeightedBlendedOIT");
 
-  // Transition the color image to work as an attachment
   m_colorImage.transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  m_depthImage.transitionTo(cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+  // m_oitWeightedColorImage.transitionTo(cmd, VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR);
+  // m_oitWeightedRevealImage.transitionTo(cmd, VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR);
+
+  //m_oitWeightedColorImage layout transition
+  VkImageMemoryBarrier2KHR imageMemoryBarrierColorImage{};
+  imageMemoryBarrierColorImage.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
+  imageMemoryBarrierColorImage.srcStageMask     = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+  imageMemoryBarrierColorImage.dstStageMask     = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+  imageMemoryBarrierColorImage.dstAccessMask    = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR;
+  imageMemoryBarrierColorImage.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageMemoryBarrierColorImage.newLayout        = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR;
+  imageMemoryBarrierColorImage.subresourceRange = {
+    .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+    .baseMipLevel   = 0,
+    .levelCount     = 1,
+    .baseArrayLayer = 0,
+    .layerCount     = 1
+  };
+  imageMemoryBarrierColorImage.image            = m_oitWeightedColorImage.image.image;
+
+  VkDependencyInfoKHR dependencyInfoColorImage{};
+  dependencyInfoColorImage.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
+  dependencyInfoColorImage.imageMemoryBarrierCount = 1;
+  dependencyInfoColorImage.pImageMemoryBarriers    = &imageMemoryBarrierColorImage;
+  vkCmdPipelineBarrier2(cmd, &dependencyInfoColorImage);
+
+  //m_oitWeightedRevealImage layout transition
+  VkImageMemoryBarrier2KHR imageMemoryBarrierRevealageImage{};
+  imageMemoryBarrierRevealageImage.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2_KHR;
+  imageMemoryBarrierRevealageImage.srcStageMask     = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+  imageMemoryBarrierRevealageImage.dstStageMask     = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+  imageMemoryBarrierRevealageImage.dstAccessMask    = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR;
+  imageMemoryBarrierRevealageImage.oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageMemoryBarrierRevealageImage.newLayout        = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR;
+  imageMemoryBarrierRevealageImage.subresourceRange ={
+      .aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+      .baseMipLevel   = 0,
+      .levelCount     = 1,
+      .baseArrayLayer = 0,
+      .layerCount     = 1
+    };
+  imageMemoryBarrierRevealageImage.image            = m_oitWeightedRevealImage.image.image;
+
+  VkDependencyInfoKHR dependencyInfoRevealageImage{};
+  dependencyInfoColorImage.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
+  dependencyInfoColorImage.imageMemoryBarrierCount = 1;
+  dependencyInfoColorImage.pImageMemoryBarriers    = &imageMemoryBarrierRevealageImage;
+  vkCmdPipelineBarrier2(cmd, &dependencyInfoColorImage);
 
   std::array<VkClearValue, 2> clearValues;
   clearValues[0].color = VkClearColorValue{.float32 = {0.0f, 0.0f, 0.0f, 0.0f}};
-  // Initially, all pixels show through all the way (reveal = 100%)
-  clearValues[1].color = VkClearColorValue{.float32 = {1.0f}};
+  clearValues[1].color = VkClearColorValue{.float32 = {1.0f, 0.0f, 0.0f, 0.0f}}; // Reveal starts at 1.0
 
-  std::array<VkRenderingAttachmentInfo,3> colorInfo =
-  {{
-    //Image 0
+  std::array<VkRenderingAttachmentInfo, 3> colorInfo = {{
+    // 0: Weighted Color Output
     {
       .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
       .pNext = nullptr,
       .imageView = m_oitWeightedColorImage.getView(),
-      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .imageLayout = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR,
       .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
       .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
       .clearValue = clearValues[0],
     },
-
-    //Image 1
+    // 1: Weighted Reveal Output
     {
       .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
       .pNext = nullptr,
       .imageView = m_oitWeightedRevealImage.getView(),
-      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .imageLayout = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR,
       .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
       .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
       .clearValue = clearValues[1],
    },
-
-    //Frame image
-    {
+   // 2: Main Color Output (Load existing opaque geometry)
+   {
       .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
       .pNext = nullptr,
       .imageView = m_colorImage.getView(),
       .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
       .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
       .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-      .clearValue = clearValues[0],
-    }
+   }
   }};
 
-  // const VkRenderPassBeginInfo renderPassInfo{.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-  //                                            .renderPass      = m_renderPassWeighted,
-  //                                            .framebuffer     = m_weightedFramebuffer,
-  //                                            .renderArea      = {.extent = {.width  = m_oitWeightedColorImage.getWidth(),
-  //                                                                           .height = m_oitWeightedColorImage.getHeight()}},
-  //                                            .clearValueCount = uint32_t(clearValues.size()),
-  //                                            .pClearValues    = clearValues.data()};
-
-  //Depth Image
-  VkRenderingAttachmentInfo depthInfo =
-  {
+  VkRenderingAttachmentInfo depthInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
     .imageView = m_depthImage.getView(),
     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    .clearValue = clearValues[1],
   };
 
-
-  VkRenderingInfo renderInfo =
-  {
+  VkRenderingInfo renderInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
-    .renderArea = {.extent = {.width  = m_colorImage.getWidth(), .height = m_colorImage.getHeight()}},
+    .renderArea = {.extent = {.width = m_colorImage.getWidth(), .height = m_colorImage.getHeight()}},
     .layerCount = 1,
-    .colorAttachmentCount = (uint32_t) colorInfo.size(),
+    .colorAttachmentCount = static_cast<uint32_t>(colorInfo.size()),
     .pColorAttachments = colorInfo.data(),
     .pDepthAttachment  = &depthInfo,
   };
 
-  //vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
   vkCmdBeginRendering(cmd, &renderInfo);
 
-  // COLOR PASS
-  // Computes the weighted sum and reveal factor.
+  // --- SUBPASS 1: COLOR ACCUMULATION ---
   {
+    VkRenderingAttachmentLocationInfoKHR locationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR};
+    locationInfo.colorAttachmentCount = 3;
+
+    // Shader writes output 0 -> Attachment 0, output 1 -> Attachment 1. Skip Attachment 2.
+    uint32_t colorLocations[3] = {0, 1, VK_ATTACHMENT_UNUSED};
+    locationInfo.pColorAttachmentLocations = colorLocations;
+    //vkCmdSetRenderingAttachmentLocationsKHR(cmd, &locationInfo);
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelines[+PassIndex::eWeightedColor]);
-    // Draw all objects
     vkCmdDrawIndexed(cmd, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
 
-  // Move to the next subpass
-  //vkCmdNextSubpass(cmd, VK_SUBPASS_CONTENTS_INLINE);
-
-  //Add a barrier so the next stage can read the pass
+  // --- LOCAL READ BARRIER ---
   VkMemoryBarrier2KHR memoryBarrier{};
   memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR;
-  memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-  memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-  memoryBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-  memoryBarrier.dstAccessMask = VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT;
+  memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
+  memoryBarrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT_KHR;
+  memoryBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT_KHR;
+  memoryBarrier.dstAccessMask = VK_ACCESS_2_INPUT_ATTACHMENT_READ_BIT_KHR;
 
   VkDependencyInfoKHR dependencyInfo{};
   dependencyInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
@@ -529,11 +562,24 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
 
   vkCmdPipelineBarrier2(cmd, &dependencyInfo);
 
-  // COMPOSITE PASS
-  // Averages out the summed colors (in some sense) to get the final transparent color.
+  // --- SUBPASS 2: COMPOSITE ---
   {
+    VkRenderingAttachmentLocationInfoKHR locationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR};
+    locationInfo.colorAttachmentCount = 3;
+
+    // Shader writes output 0 -> Attachment 2. Skip Attachments 0 & 1.
+    uint32_t compositeLocations[3] = {VK_ATTACHMENT_UNUSED, VK_ATTACHMENT_UNUSED, 0};
+    locationInfo.pColorAttachmentLocations = compositeLocations;
+    //vkCmdSetRenderingAttachmentLocationsKHR(cmd, &locationInfo);
+
+    // Map shader input_attachment_index 0 -> Attachment 0, index 1 -> Attachment 1
+    VkRenderingInputAttachmentIndexInfoKHR inputInfo{VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR};
+    inputInfo.colorAttachmentCount = 3;
+    uint32_t inputIndices[3] = {VK_ATTACHMENT_UNUSED, 1, 0 };
+    inputInfo.pColorAttachmentInputIndices = inputIndices;
+    //vkCmdSetRenderingInputAttachmentIndices(cmd, &inputInfo);
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelines[+PassIndex::eWeightedComposite]);
-    // Draw a full-screen triangle
     vkCmdDraw(cmd, 3, 1, 0, 0);
   }
 }

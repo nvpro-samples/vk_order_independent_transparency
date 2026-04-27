@@ -63,7 +63,7 @@ enum class BlendMode
 // These are initially set to one of the best-looking settings.
 struct State
 {
-  uint32_t algorithm                     = OIT_SPINLOCK;
+  uint32_t algorithm                     = OIT_WEIGHTED;
   uint32_t oitLayers                     = 8;
   int32_t  linkedListAllocatedPerElement = 10;
   int32_t  percentTransparent            = 100;

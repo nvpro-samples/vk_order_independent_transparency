@@ -540,19 +540,18 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
   const VkFormat colorFormat = m_colorImage.getFormat();
   const VkFormat depthFormat = m_depthImage.getFormat();
 
-  // For WEIGHTED_COLOR blend mode we have 2 color attachments, otherwise 1
   //const uint32_t colorAttachmentCount = (blendMode == BlendMode::WEIGHTED_COLOR) ? 2 : 1;
   uint32_t colorAttachmentCount = 1;
 
   std::vector<VkFormat> colorFormats ={ colorFormat, };
+  std::vector<VkDynamicState> dynamicStates;
 
   if (blendMode == BlendMode::WEIGHTED_COLOR || blendMode == BlendMode::WEIGHTED_COMPOSITE)
   {
-    colorFormats =
-    {
+    colorFormats = {
       m_oitWeightedColorFormat,
       m_oitWeightedRevealFormat,
-      colorFormat
+      colorFormat,
     };
   }
 
@@ -564,6 +563,13 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
     .depthAttachmentFormat   = depthFormat,
   };
 
+  // Setup Dynamic State Info
+  VkPipelineDynamicStateCreateInfo dynamicStateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  if (!dynamicStates.empty())
+  {
+    dynamicStateInfo.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicStateInfo.pDynamicStates    = dynamicStates.data();
+  }
 
   constexpr VkColorComponentFlags allBits =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -587,42 +593,45 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                                                                .colorWriteMask = allBits});
       break;
     case BlendMode::WEIGHTED_COLOR:
-      // Test but don't write to depth
-      depthStencilState.depthWriteEnable = false;
-      blendInfo.attachmentCount          = 2;
-      // Pass 1: Write to 0 and 1, leave 2 alone.
-      depthStencilState.depthWriteEnable = false;
-      blendInfo.attachmentCount          = 3;
-      blendAttachments.push_back(               VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
-                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
-                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .colorWriteMask      = allBits});
-      blendAttachments.push_back(               VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
-                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
-                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
-                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
-                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
-                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .colorWriteMask      = allBits});
-      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
-    break;
+        // Test but don't write to depth
+        // Pass 1: Write to 0 and 1
+        depthStencilState.depthWriteEnable = false;
+        blendInfo.attachmentCount          = 3;
+        // Attachment 0: Weighted Color
+        blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                       .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                       .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                       .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                       .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                       .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                       .colorWriteMask      = allBits});
+        // Attachment 1: Reveal
+        blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                       .srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                       .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
+                                                                       .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                       .srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                       .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                       .colorWriteMask      = allBits});
+        // Attachment 2: Main Color (unused in this pass)
+        blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
       break;
     case BlendMode::WEIGHTED_COMPOSITE:
       // Test but don't write to depth
       depthStencilState.depthWriteEnable = false;
-      blendInfo.attachmentCount          = 3;
-      blendAttachments.push_back(                 VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
-      blendAttachments.push_back(                               VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0} );
-      blendAttachments.push_back(              VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
-                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
-                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-                                                                               .colorWriteMask      = allBits});
+      blendInfo.attachmentCount          = 3; // Must match colorFormats
+      // Attachment 0: Weighted Color (unused in this pass)
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_TRUE, .colorWriteMask = 0});
+      // Attachment 1: Reveal (unused in this pass)
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_TRUE, .colorWriteMask = 0});
+      // Attachment 2: Main Color
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                     .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                     .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                     .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                     .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                     .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                     .colorWriteMask      = allBits});
       break;
     default:
       assert(!"Blend mode configuration not implemented!");
@@ -635,6 +644,7 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                           .pNext               = &renderingInfo,
                                           .stageCount          = uint32_t(stages.size()),
                                           .pStages             = stages.data(),
+                                          //.pDynamicState       = dynamicStates.empty() ? nullptr : &dynamicStateInfo,
                                           .pVertexInputState   = &vertexInput,
                                           .pInputAssemblyState = &inputAssembly,
                                           .pViewportState      = &viewportInfo,
