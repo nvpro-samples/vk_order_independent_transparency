@@ -185,6 +185,27 @@ public:
   ImageAndView  m_oitCounterImage;
   ImageAndView  m_oitWeightedColorImage;
   ImageAndView  m_oitWeightedRevealImage;
+
+  //Mapping is Array indices to shader layout  
+  std::array<uint32_t, 3>             color_attachment_locations = {VK_ATTACHMENT_UNUSED, 0, 1, };
+  VkRenderingAttachmentLocationInfo   locationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
+                                                    nullptr,
+                                                    static_cast<uint32_t>(color_attachment_locations.size()),
+                            color_attachment_locations.data()};
+
+  std::array<uint32_t, 3>             reset_color_attachment_locations = {0, VK_ATTACHMENT_UNUSED, VK_ATTACHMENT_UNUSED};
+  VkRenderingAttachmentLocationInfo   resetLocationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
+                                                    nullptr,
+                                                    static_cast<uint32_t>(reset_color_attachment_locations.size()),
+                            reset_color_attachment_locations.data()};
+
+  std::array<uint32_t, 3>             color_attachment_input_indices{VK_ATTACHMENT_UNUSED, 1, 2  };
+  VkRenderingInputAttachmentIndexInfo rendering_attachment_index_info{VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR,
+                                                                      nullptr,
+                                                                      static_cast<uint32_t>(color_attachment_input_indices.size()),
+                                                                      color_attachment_input_indices.data()};
+
+
   // Depending on the MSAA settings and resolution, we may want to downsample
   // to a 1 sample per screen pixel texture:
   ImageAndView m_downsampleImage;

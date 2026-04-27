@@ -480,7 +480,16 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
   clearValues[1].color = VkClearColorValue{.float32 = {1.0f, 0.0f, 0.0f, 0.0f}}; // Reveal starts at 1.0
 
   std::array<VkRenderingAttachmentInfo, 3> colorInfo = {{
-    // 0: Weighted Color Output
+    // 0: Main Color Output (Load existing opaque geometry)
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_colorImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+   },
+    // 1: Weighted Color Output
     {
       .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
       .pNext = nullptr,
@@ -490,7 +499,7 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
       .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
       .clearValue = clearValues[0],
     },
-    // 1: Weighted Reveal Output
+    // 2: Weighted Reveal Output
     {
       .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
       .pNext = nullptr,
@@ -500,15 +509,6 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
       .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
       .clearValue = clearValues[1],
    },
-   // 2: Main Color Output (Load existing opaque geometry)
-   {
-      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-      .pNext = nullptr,
-      .imageView = m_colorImage.getView(),
-      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-      .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-   }
   }};
 
   VkRenderingAttachmentInfo depthInfo = {
@@ -532,17 +532,12 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
 
   vkCmdBeginRendering(cmd, &renderInfo);
 
+  //vkCmdSetRenderingInputAttachmentIndices(cmd, &rendering_attachment_index_info);
   // --- SUBPASS 1: COLOR ACCUMULATION ---
   {
-    VkRenderingAttachmentLocationInfoKHR locationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR};
-    locationInfo.colorAttachmentCount = 3;
-
-    // Shader writes output 0 -> Attachment 0, output 1 -> Attachment 1. Skip Attachment 2.
-    uint32_t colorLocations[3] = {0, 1, VK_ATTACHMENT_UNUSED};
-    locationInfo.pColorAttachmentLocations = colorLocations;
-    //vkCmdSetRenderingAttachmentLocationsKHR(cmd, &locationInfo);
-
+    //For first pass, write to images 1 and 2
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelines[+PassIndex::eWeightedColor]);
+    vkCmdSetRenderingAttachmentLocations(cmd, &locationInfo);
     vkCmdDrawIndexed(cmd, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
 
@@ -564,22 +559,10 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
 
   // --- SUBPASS 2: COMPOSITE ---
   {
-    VkRenderingAttachmentLocationInfoKHR locationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR};
-    locationInfo.colorAttachmentCount = 3;
-
-    // Shader writes output 0 -> Attachment 2. Skip Attachments 0 & 1.
-    uint32_t compositeLocations[3] = {VK_ATTACHMENT_UNUSED, VK_ATTACHMENT_UNUSED, 0};
-    locationInfo.pColorAttachmentLocations = compositeLocations;
-    //vkCmdSetRenderingAttachmentLocationsKHR(cmd, &locationInfo);
-
-    // Map shader input_attachment_index 0 -> Attachment 0, index 1 -> Attachment 1
-    VkRenderingInputAttachmentIndexInfoKHR inputInfo{VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR};
-    inputInfo.colorAttachmentCount = 3;
-    uint32_t inputIndices[3] = {VK_ATTACHMENT_UNUSED, 1, 0 };
-    inputInfo.pColorAttachmentInputIndices = inputIndices;
-    //vkCmdSetRenderingInputAttachmentIndices(cmd, &inputInfo);
-
+    //Only read last two entries
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelines[+PassIndex::eWeightedComposite]);
+    vkCmdSetRenderingAttachmentLocations(cmd, &resetLocationInfo);
+    vkCmdSetRenderingInputAttachmentIndices(cmd, &rendering_attachment_index_info);
     vkCmdDraw(cmd, 3, 1, 0, 0);
   }
 }
