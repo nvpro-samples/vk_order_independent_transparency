@@ -417,8 +417,6 @@ void Sample::drawTransparentLock(VkCommandBuffer& cmd, int numObjects, bool useI
 
 void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
 {
-  // Swap out the render pass for WBOIT's render pass
-  //vkCmdEndRenderPass(cmd);
   // End the opaque rendering block
   vkCmdEndRendering(cmd);
 
@@ -426,8 +424,8 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
 
   m_colorImage.transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   m_depthImage.transitionTo(cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-  // m_oitWeightedColorImage.transitionTo(cmd, VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR);
-  // m_oitWeightedRevealImage.transitionTo(cmd, VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR);
+
+  //Creating the layout manually sice transitionTo() does not support VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR as of this writing
 
   //m_oitWeightedColorImage layout transition
   VkImageMemoryBarrier2KHR imageMemoryBarrierColorImage{};
@@ -469,7 +467,6 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
     };
   imageMemoryBarrierRevealageImage.image            = m_oitWeightedRevealImage.image.image;
 
-  VkDependencyInfoKHR dependencyInfoRevealageImage{};
   dependencyInfoColorImage.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR;
   dependencyInfoColorImage.imageMemoryBarrierCount = 1;
   dependencyInfoColorImage.pImageMemoryBarriers    = &imageMemoryBarrierRevealageImage;
@@ -479,7 +476,8 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
   clearValues[0].color = VkClearColorValue{.float32 = {0.0f, 0.0f, 0.0f, 0.0f}};
   clearValues[1].color = VkClearColorValue{.float32 = {1.0f, 0.0f, 0.0f, 0.0f}}; // Reveal starts at 1.0
 
-  std::array<VkRenderingAttachmentInfo, 3> colorInfo = {{
+  //Color attachments that will be used for both passes of WBOIT
+  std::array<VkRenderingAttachmentInfo, 3> colorAttachmentsInfo = {{
     // 0: Main Color Output (Load existing opaque geometry)
     {
       .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -525,23 +523,25 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
     .pNext = nullptr,
     .renderArea = {.extent = {.width = m_colorImage.getWidth(), .height = m_colorImage.getHeight()}},
     .layerCount = 1,
-    .colorAttachmentCount = static_cast<uint32_t>(colorInfo.size()),
-    .pColorAttachments = colorInfo.data(),
+    .colorAttachmentCount = static_cast<uint32_t>(colorAttachmentsInfo.size()),
+    .pColorAttachments = colorAttachmentsInfo.data(),
     .pDepthAttachment  = &depthInfo,
   };
 
   vkCmdBeginRendering(cmd, &renderInfo);
 
-  //vkCmdSetRenderingInputAttachmentIndices(cmd, &rendering_attachment_index_info);
   // --- SUBPASS 1: COLOR ACCUMULATION ---
   {
-    //For first pass, write to images 1 and 2
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelines[+PassIndex::eWeightedColor]);
-    vkCmdSetRenderingAttachmentLocations(cmd, &locationInfo);
+
+    //Since we are using dynamic subpasses, we need to tell the driver which image attachments will be used to accept shader output writes.
+    //For first pass, write to images 1 and 2
+    vkCmdSetRenderingAttachmentLocations(cmd, &m_wboitColorAttachmentLocationInfo);
     vkCmdDrawIndexed(cmd, numObjects * m_objectTriangleIndices, 1, 0, 0, 0);
   }
 
   // --- LOCAL READ BARRIER ---
+  //We need to include this barrier so the next stage can read pixel information from the previous phase
   VkMemoryBarrier2KHR memoryBarrier{};
   memoryBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2_KHR;
   memoryBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR;
@@ -559,10 +559,14 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
 
   // --- SUBPASS 2: COMPOSITE ---
   {
-    //Only read last two entries
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelines[+PassIndex::eWeightedComposite]);
-    vkCmdSetRenderingAttachmentLocations(cmd, &resetLocationInfo);
-    vkCmdSetRenderingInputAttachmentIndices(cmd, &rendering_attachment_index_info);
+
+    //Firstly, we need to reset the shader writing output order in this pass.
+    vkCmdSetRenderingAttachmentLocations(cmd, &m_wboitCompositeResetAttachmentLocationsInfo);
+
+    //Next, we only read the last two entries to composite the accumulation and revealage passes.
+    //Note that this won't work without the proper blend settings that are set in createGraphicsPipeline()
+    vkCmdSetRenderingInputAttachmentIndices(cmd, &m_wboitCompositeAttachmentInputIndicesInfo);
     vkCmdDraw(cmd, 3, 1, 0, 0);
   }
 }

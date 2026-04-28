@@ -470,8 +470,6 @@ void Sample::createFramebuffers()
   // }
 }
 
-#pragma optimize("", off)
-
 VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                           const VkShaderModule vertShaderModule,
                                           const VkShaderModule fragShaderModule,
@@ -599,8 +597,8 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
         depthStencilState.depthWriteEnable = false;
         blendInfo.attachmentCount          = 3;
 
-        //rendering_attachment_index_info.pNext = &locationInfo;
-        renderingInfo.pNext = &locationInfo;
+        //m_wboitCompositeAttachmentInputIndicesInfo.pNext = &m_wboitColorAttachmentLocationInfo;
+        renderingInfo.pNext = &m_wboitColorAttachmentLocationInfo;
 
         //Attachment 01: Main Color (unused in this pass)
         blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
@@ -626,8 +624,8 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
     case BlendMode::WEIGHTED_COMPOSITE:
       // Test but don't write to depth
       depthStencilState.depthWriteEnable = false;
-      rendering_attachment_index_info.pNext = &resetLocationInfo;
-      renderingInfo.pNext = &rendering_attachment_index_info;
+      m_wboitCompositeAttachmentInputIndicesInfo.pNext = &m_wboitCompositeResetAttachmentLocationsInfo;
+      renderingInfo.pNext = &m_wboitCompositeAttachmentInputIndicesInfo;
       blendInfo.attachmentCount          = 3;
 
       // Attachment 0: Main Color

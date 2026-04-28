@@ -186,25 +186,107 @@ public:
   ImageAndView  m_oitWeightedColorImage;
   ImageAndView  m_oitWeightedRevealImage;
 
-  //Mapping is Array indices to shader layout  
-  std::array<uint32_t, 3>             color_attachment_locations = {VK_ATTACHMENT_UNUSED, 0, 1, };
-  VkRenderingAttachmentLocationInfo   locationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
-                                                    nullptr,
-                                                    static_cast<uint32_t>(color_attachment_locations.size()),
-                            color_attachment_locations.data()};
+  /////////////////////////////////////////////////////////////////////////////
+  //Weighted OIT color attachment mappings
+  /*
+   * Specifies the locations of color attachments in a Vulkan render pass.
+   *
+   * These arrays contain indices corresponding to the attachment points in the
+   * color attachments array which can be found in drawTransparentWeighted().
+   *
+   * - `VK_ATTACHMENT_UNUSED` indicates that the corresponding color output is not used.
+   * - Other values represent valid attachment indices.
+   *
+   * The size of the array represents the maximum number of color attachments
+   * considered for this particular configuration.
+   */
+  /////////////////////////////////////////////////////////////////////////////
 
-  std::array<uint32_t, 3>             reset_color_attachment_locations = {0, VK_ATTACHMENT_UNUSED, VK_ATTACHMENT_UNUSED};
-  VkRenderingAttachmentLocationInfo   resetLocationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
-                                                    nullptr,
-                                                    static_cast<uint32_t>(reset_color_attachment_locations.size()),
-                            reset_color_attachment_locations.data()};
 
-  std::array<uint32_t, 3>             color_attachment_input_indices{VK_ATTACHMENT_UNUSED, 1, 2  };
-  VkRenderingInputAttachmentIndexInfo rendering_attachment_index_info{VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR,
+  /*
+   * VkRenderingAttachmentLocationInfo is used to decide which color attachment will receive which shader output
+   * eg [image 1 in the color attachments array will receive the data written by layout(location = 1) out float outReveal]
+   * In other words, the array index is used to decide how shader outputs map to color attachments.
+   * This array is created here and needs to be passed to the pipeline at construction time and also needs to be called as part of cmd buffer recording.
+   * See createGraphicsPipeline and drawTransparentWeighted() for implementations of these.
+  */
+
+  //WBOIT uses two passes. We need the first pass to write exclusively to the accumulutation and revealage image attachments and ignore the main color pass
+  //Index 0 of the color attachments array maps to an unused output.
+  //Index 1 of the color attachments array maps to shader layout (0) -> color
+  //Index 2 of the color attachmnets array maps to shader layout (1) -> alpha
+  std::array<uint32_t, 3>             m_wboitColorAttachmentLocations = {VK_ATTACHMENT_UNUSED, 0, 1, };
+  VkRenderingAttachmentLocationInfo   m_wboitColorAttachmentLocationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
+                                                    nullptr,
+                                                    static_cast<uint32_t>(m_wboitColorAttachmentLocations.size()),
+                            m_wboitColorAttachmentLocations.data()};
+
+  //These are used in the composite
+  //Same explanation applies here too as the previous array. The only difference is this is used to reset the shader write order back to default
+  std::array<uint32_t, 3>             m_wboitCompositeResetAttachmentLocations = {0, VK_ATTACHMENT_UNUSED, VK_ATTACHMENT_UNUSED};
+  VkRenderingAttachmentLocationInfo   m_wboitCompositeResetAttachmentLocationsInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
+                                                    nullptr,
+                                                    static_cast<uint32_t>(m_wboitCompositeResetAttachmentLocations.size()),
+                            m_wboitCompositeResetAttachmentLocations.data()};
+
+  //This is used to decide the shader input read order. This maps which color attachment from the color attachments array is read by which shader input
+  std::array<uint32_t, 3>             m_wboitCompositeAttachmentInputIndices{VK_ATTACHMENT_UNUSED, 1, 2  };
+  VkRenderingInputAttachmentIndexInfo m_wboitCompositeAttachmentInputIndicesInfo{VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR,
                                                                       nullptr,
-                                                                      static_cast<uint32_t>(color_attachment_input_indices.size()),
-                                                                      color_attachment_input_indices.data()};
+                                                                      static_cast<uint32_t>(m_wboitCompositeAttachmentInputIndices.size()),
+                                                                      m_wboitCompositeAttachmentInputIndices.data()};
 
+  //Color attachments that will be used for both passes of WBOIT
+  std::array<VkRenderingAttachmentInfo, 3> colorInfo = {{
+    // 0: Main Color Output (Load existing opaque geometry)
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_colorImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+   },
+    // 1: Weighted Color Output
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_oitWeightedColorImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      .clearValue = VkClearColorValue{.float32 = {0.0f, 0.0f, 0.0f, 0.0f}},
+    },
+    // 2: Weighted Reveal Output
+    {
+      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+      .pNext = nullptr,
+      .imageView = m_oitWeightedRevealImage.getView(),
+      .imageLayout = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR,
+      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      .clearValue = VkClearColorValue{.float32 = {1.0f, 0.0f, 0.0f, 0.0f}} // Reveal starts at 1.0,
+   },
+  }};
+
+  VkRenderingAttachmentInfo depthInfo = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+    .pNext = nullptr,
+    .imageView = m_depthImage.getView(),
+    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+  };
+
+  VkRenderingInfo renderInfo = {
+    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+    .pNext = nullptr,
+    .renderArea = {.extent = {.width = m_colorImage.getWidth(), .height = m_colorImage.getHeight()}},
+    .layerCount = 1,
+    .colorAttachmentCount = static_cast<uint32_t>(colorInfo.size()),
+    .pColorAttachments = colorInfo.data(),
+    .pDepthAttachment  = &depthInfo,
+  };
 
   // Depending on the MSAA settings and resolution, we may want to downsample
   // to a 1 sample per screen pixel texture:
@@ -414,7 +496,7 @@ public:
 
   // Draws the first numObjects objects using the two-pass depth sorting OIT
   // method. Assumes that the right render pass has already been started, and
-  // that the index and vertex buffers for the mesh and drescriptors are already
+  // that the index and vertex buffers for the mesh and descriptors are already
   // good to go.
   void drawTransparentLoop(VkCommandBuffer& cmdBuffer, int numObjects);
 
@@ -422,7 +504,7 @@ public:
 
   // A variant of OIT_LOOP that uses one less draw pass when the GPU supports
   // 64-bit atomics. Assumes that the right render pass has already been started, and
-  // that the index and vertex buffers for the mesh and drescriptors are already
+  // that the index and vertex buffers for the mesh and descriptors are already
   // good to go.
   void drawTransparentLoop64(VkCommandBuffer& cmdBuffer, int numObjects);
 
