@@ -213,7 +213,6 @@ void Sample::createFrameImages(VkCommandBuffer cmdBuffer)
                                   m_oitWeightedRevealFormat, bufferWidth, bufferHeight, 1, weightedUsages, m_state.msaa);
     NVVK_DBG_NAME(m_oitWeightedRevealImage.image.image);
     // Transition both of them to color attachments, which is the way they'll first be used:
-    // (see m_renderPassWeighted for reference)
     m_oitWeightedColorImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     m_oitWeightedRevealImage.transitionTo(cmdBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   }
@@ -383,21 +382,6 @@ void Sample::updateAllDescriptorSets()
 
   // Now go ahead and update the descriptor sets!
   vkUpdateDescriptorSets(m_app->getDevice(), static_cast<uint32_t>(updates.size()), updates.data(), 0, nullptr);
-}
-
-void Sample::destroyRenderPasses()
-{
-  if(m_renderPassColorDepthClear != VK_NULL_HANDLE)
-  {
-    vkDestroyRenderPass(m_app->getDevice(), m_renderPassColorDepthClear, NULL);
-    m_renderPassColorDepthClear = VK_NULL_HANDLE;
-  }
-
-  if(m_renderPassWeighted != VK_NULL_HANDLE)
-  {
-    vkDestroyRenderPass(m_app->getDevice(), m_renderPassWeighted, NULL);
-    m_renderPassWeighted = VK_NULL_HANDLE;
-  }
 }
 
 void Sample::destroyShaderModules()

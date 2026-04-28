@@ -220,7 +220,6 @@ void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuil
     if(framebuffersAndDescriptorsNeedReinit)
     {
       updateAllDescriptorSets();
-      createFramebuffers();
     }
 
     if(shadersNeedUpdate)
@@ -248,8 +247,6 @@ void Sample::onDetach()
   // From updateRendererFromState
   destroyGraphicsPipelines();
   destroyShaderModules();
-  destroyFramebuffers();
-  destroyRenderPasses();
   destroyDescriptorSets();
   destroyFrameImages();
   destroyScene();
@@ -404,60 +401,6 @@ void Sample::initScene()
     m_app->submitAndWaitTempCmdBuffer(cmd);
   }
   uploader.deinit();
-}
-
- void Sample::destroyFramebuffers()
- {
-//   vkDestroyFramebuffer(m_app->getDevice(), m_mainColorDepthFramebuffer, nullptr);
-//   m_mainColorDepthFramebuffer = VK_NULL_HANDLE;
-//
-//   if(m_weightedFramebuffer != VK_NULL_HANDLE)
-//   {
-//     vkDestroyFramebuffer(m_app->getDevice(), m_weightedFramebuffer, nullptr);
-//     m_weightedFramebuffer = VK_NULL_HANDLE;
-//   }
- }
-
-void Sample::createFramebuffers()
-{
-  // destroyFramebuffers();
-  // // TODO: Remove and replace with dynamic rendering
-  //
-  // // Color + depth offscreen framebuffer
-  // {
-  //   const std::array<VkImageView, 2> attachments{m_colorImage.getView(), m_depthImage.getView()};
-  //   const VkFramebufferCreateInfo    fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-  //                                           .renderPass      = m_renderPassColorDepthClear,
-  //                                           .attachmentCount = static_cast<uint32_t>(attachments.size()),
-  //                                           .pAttachments    = attachments.data(),
-  //                                           .width           = m_colorImage.getWidth(),
-  //                                           .height          = m_colorImage.getHeight(),
-  //                                           .layers          = 1};
-  //
-  //   NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, NULL, &m_mainColorDepthFramebuffer));
-  //   NVVK_DBG_NAME(m_mainColorDepthFramebuffer);
-  // }
-  //
-  // // Weighted color + weighted reveal framebuffer (for Weighted, Blended
-  // // Order-Independent Transparency). See the render pass description for more info.
-  // if(m_state.algorithm == OIT_WEIGHTED)
-  // {
-  //   const std::array<VkImageView, 4> attachments{m_oitWeightedColorImage.getView(),   //
-  //                                                m_oitWeightedRevealImage.getView(),  //
-  //                                                m_colorImage.getView(),              //
-  //                                                m_depthImage.getView()};
-  //
-  //   const VkFramebufferCreateInfo fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-  //                                        .renderPass      = m_renderPassWeighted,
-  //                                        .attachmentCount = static_cast<uint32_t>(attachments.size()),
-  //                                        .pAttachments    = attachments.data(),
-  //                                        .width           = m_oitWeightedColorImage.getWidth(),
-  //                                        .height          = m_oitWeightedColorImage.getHeight(),
-  //                                        .layers          = 1};
-  //
-  //   NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, nullptr, &m_weightedFramebuffer));
-  //   NVVK_DBG_NAME(m_weightedFramebuffer);
-  // }
 }
 
 VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
@@ -651,8 +594,7 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                           .pDepthStencilState  = &depthStencilState,
                                           .pColorBlendState    = &blendInfo,
                                           .layout              = m_pipelineLayout,
-                                          .renderPass          = nullptr,
-                                          .subpass             = subpass};
+                                          .renderPass          = VK_NULL_HANDLE};
 
   VkPipeline pipeline = VK_NULL_HANDLE;
   NVVK_CHECK(vkCreateGraphicsPipelines(m_app->getDevice(), VK_NULL_HANDLE, 1, &info, nullptr, &pipeline));

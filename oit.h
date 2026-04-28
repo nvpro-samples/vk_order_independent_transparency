@@ -308,9 +308,7 @@ public:
   // Descriptors
   nvvk::DescriptorPack m_descriptorPack;
   VkPipelineLayout     m_pipelineLayout = VK_NULL_HANDLE;
-  // Render passes
-  VkRenderPass m_renderPassColorDepthClear = VK_NULL_HANDLE;
-  VkRenderPass m_renderPassWeighted        = VK_NULL_HANDLE;
+
   // Graphics pipelines (organized by the algorithms that use them)
   std::array<VkPipeline, size_t(PassIndex::eCount)> m_pipelines{};
 
@@ -414,15 +412,6 @@ public:
   // This needs to be called whenever our buffers change. This will basically
   // cause VkCmdBindDescriptorSets to bind all of the textures we need at once.
   void updateAllDescriptorSets();
-
-  // Device must not be using resource when called.
-  void destroyRenderPasses();
-
-  // Device must not be using resource when called.
-  void destroyFramebuffers();
-
-  // Device must not be using resource when called.
-  void createFramebuffers();
 
   // Device must not be using resource when called.
   void destroyShaderModules();
