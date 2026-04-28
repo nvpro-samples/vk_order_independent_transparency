@@ -63,7 +63,7 @@ enum class BlendMode
 // These are initially set to one of the best-looking settings.
 struct State
 {
-  uint32_t algorithm                     = OIT_WEIGHTED;
+  uint32_t algorithm                     = OIT_SPINLOCK;
   uint32_t oitLayers                     = 8;
   int32_t  linkedListAllocatedPerElement = 10;
   int32_t  percentTransparent            = 100;
@@ -214,7 +214,7 @@ public:
   //WBOIT uses two passes. We need the first pass to write exclusively to the accumulutation and revealage image attachments and ignore the main color pass
   //Index 0 of the color attachments array maps to an unused output.
   //Index 1 of the color attachments array maps to shader layout (0) -> color
-  //Index 2 of the color attachmnets array maps to shader layout (1) -> alpha
+  //Index 2 of the color attachments array maps to shader layout (1) -> alpha
   std::array<uint32_t, 3>             m_wboitColorAttachmentLocations = {VK_ATTACHMENT_UNUSED, 0, 1, };
   VkRenderingAttachmentLocationInfo   m_wboitColorAttachmentLocationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
                                                     nullptr,
