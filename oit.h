@@ -236,58 +236,6 @@ public:
                                                                       static_cast<uint32_t>(m_wboitCompositeAttachmentInputIndices.size()),
                                                                       m_wboitCompositeAttachmentInputIndices.data()};
 
-  //Color attachments that will be used for both passes of WBOIT
-  std::array<VkRenderingAttachmentInfo, 3> colorInfo = {{
-    // 0: Main Color Output (Load existing opaque geometry)
-    {
-      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-      .pNext = nullptr,
-      .imageView = m_colorImage.getView(),
-      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-      .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-   },
-    // 1: Weighted Color Output
-    {
-      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-      .pNext = nullptr,
-      .imageView = m_oitWeightedColorImage.getView(),
-      .imageLayout = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR,
-      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-      .clearValue = VkClearColorValue{.float32 = {0.0f, 0.0f, 0.0f, 0.0f}},
-    },
-    // 2: Weighted Reveal Output
-    {
-      .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-      .pNext = nullptr,
-      .imageView = m_oitWeightedRevealImage.getView(),
-      .imageLayout = VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR,
-      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-      .clearValue = VkClearColorValue{.float32 = {1.0f, 0.0f, 0.0f, 0.0f}} // Reveal starts at 1.0,
-   },
-  }};
-
-  VkRenderingAttachmentInfo depthInfo = {
-    .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-    .pNext = nullptr,
-    .imageView = m_depthImage.getView(),
-    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-  };
-
-  VkRenderingInfo renderInfo = {
-    .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-    .pNext = nullptr,
-    .renderArea = {.extent = {.width = m_colorImage.getWidth(), .height = m_colorImage.getHeight()}},
-    .layerCount = 1,
-    .colorAttachmentCount = static_cast<uint32_t>(colorInfo.size()),
-    .pColorAttachments = colorInfo.data(),
-    .pDepthAttachment  = &depthInfo,
-  };
-
   // Depending on the MSAA settings and resolution, we may want to downsample
   // to a 1 sample per screen pixel texture:
   ImageAndView m_downsampleImage;
