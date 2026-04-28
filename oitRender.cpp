@@ -114,23 +114,14 @@ void Sample::onRender(VkCommandBuffer cmd)
     };
 
     // Dynamic rendering info
-    VkRenderingInfo render_info = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
-    render_info.renderArea          = {.extent = {m_colorImage.getWidth(), m_colorImage.getHeight()}},
-    render_info.layerCount          = 1;
-    render_info.colorAttachmentCount = 1;
-    render_info.pColorAttachments   = &colorAttachmentInfo;
-    render_info.pDepthAttachment    = &depthAttachmentInfo;
+    VkRenderingInfo dynamicRenderInfo = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+    dynamicRenderInfo.renderArea          = {.extent = {m_colorImage.getWidth(), m_colorImage.getHeight()}},
+    dynamicRenderInfo.layerCount          = 1;
+    dynamicRenderInfo.colorAttachmentCount = 1;
+    dynamicRenderInfo.pColorAttachments   = &colorAttachmentInfo;
+    dynamicRenderInfo.pDepthAttachment    = &depthAttachmentInfo;
 
-    // const VkRenderPassBeginInfo renderPassInfo{.sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-    //                                            .renderPass  = m_renderPassColorDepthClear,
-    //                                            .framebuffer = m_mainColorDepthFramebuffer,
-    //                                            .renderArea = {.extent = {m_colorImage.getWidth(), m_colorImage.getHeight()}},
-    //                                            .clearValueCount = uint32_t(clearValues.size()),
-    //                                            .pClearValues    = clearValues.data()};
-
-    //TODO: Change this to start and below to end dynamic rendering
-    vkCmdBeginRendering(cmd, &render_info);
-    //vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBeginRendering(cmd, &dynamicRenderInfo);
 
     // Bind the vertex and index buffers
     const VkDeviceSize offset = 0;
@@ -425,7 +416,8 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
   m_colorImage.transitionTo(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   m_depthImage.transitionTo(cmd, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-  //Creating the layout manually sice transitionTo() does not support VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR as of this writing
+  //Creating the image layout manually for color and revealage images as transitionTo() does not
+  //support VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR as of this writing
 
   //m_oitWeightedColorImage layout transition
   VkImageMemoryBarrier2KHR imageMemoryBarrierColorImage{};
@@ -472,6 +464,7 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
   dependencyInfoColorImage.pImageMemoryBarriers    = &imageMemoryBarrierRevealageImage;
   vkCmdPipelineBarrier2(cmd, &dependencyInfoColorImage);
 
+  //Set up clear values for the images
   std::array<VkClearValue, 2> clearValues;
   clearValues[0].color = VkClearColorValue{.float32 = {0.0f, 0.0f, 0.0f, 0.0f}};
   clearValues[1].color = VkClearColorValue{.float32 = {1.0f, 0.0f, 0.0f, 0.0f}}; // Reveal starts at 1.0
@@ -509,7 +502,7 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
    },
   }};
 
-  VkRenderingAttachmentInfo depthInfo = {
+  VkRenderingAttachmentInfo depthAttachmentInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
     .pNext = nullptr,
     .imageView = m_depthImage.getView(),
@@ -518,17 +511,17 @@ void Sample::drawTransparentWeighted(VkCommandBuffer& cmd, int numObjects)
     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
   };
 
-  VkRenderingInfo renderInfo = {
+  VkRenderingInfo renderingAttachmentInfo = {
     .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
     .pNext = nullptr,
     .renderArea = {.extent = {.width = m_colorImage.getWidth(), .height = m_colorImage.getHeight()}},
     .layerCount = 1,
     .colorAttachmentCount = static_cast<uint32_t>(colorAttachmentsInfo.size()),
     .pColorAttachments = colorAttachmentsInfo.data(),
-    .pDepthAttachment  = &depthInfo,
+    .pDepthAttachment  = &depthAttachmentInfo,
   };
 
-  vkCmdBeginRendering(cmd, &renderInfo);
+  vkCmdBeginRendering(cmd, &renderingAttachmentInfo);
 
   // --- SUBPASS 1: COLOR ACCUMULATION ---
   {

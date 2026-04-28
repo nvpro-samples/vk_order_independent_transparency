@@ -400,188 +400,6 @@ void Sample::destroyRenderPasses()
   }
 }
 
-void Sample::createRenderPasses()
-{
-  destroyRenderPasses();
-
-  // m_renderPassColorDepthClear
-  // Render pass for rendering to m_colorImage and m_depthImage, clearing them
-  // beforehand. Both are in VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL.
-  // We create this manually since (as of this writing) nvvk::createRenderPass
-  // doesn't support multisampling.
-  // {
-  //   std::array<VkAttachmentDescription, 2> attachments = {};  // Color attachment, depth attachment
-  //   // Color attachment
-  //   attachments[0] = VkAttachmentDescription{
-  //       .format         = m_colorImage.getFormat(),
-  //       .samples        = static_cast<VkSampleCountFlagBits>(m_state.msaa),
-  //       .loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR,
-  //       .storeOp        = VK_ATTACHMENT_STORE_OP_STORE,
-  //       .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-  //       .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-  //       .initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-  //       .finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-  //   };
-  //
-  //   // Color attachment reference
-  //   const VkAttachmentReference colorAttachmentRef{.attachment = 0, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-  //
-  //   // Depth attachment
-  //   attachments[1]               = attachments[0];
-  //   attachments[1].format        = m_depthImage.getFormat();
-  //   attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-  //   attachments[1].finalLayout   = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-  //
-  //   // Depth attachment reference
-  //   const VkAttachmentReference depthAttachmentRef{.attachment = 1, .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-  //
-  //   // 1 subpass
-  //   const VkSubpassDescription subpass{.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS,
-  //                                      .colorAttachmentCount    = 1,
-  //                                      .pColorAttachments       = &colorAttachmentRef,
-  //                                      .pDepthStencilAttachment = &depthAttachmentRef};
-  //
-  //   // We only need to specify one dependency: Since the subpass has a barrier, the subpass will
-  //   // need a self-dependency. (There are implicit external dependencies that are automatically added.)
-  //   const VkSubpassDependency selfDependency{
-  //       .srcSubpass      = 0,
-  //       .dstSubpass      = 0,
-  //       .srcStageMask    = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-  //       .dstStageMask    = selfDependency.srcStageMask,
-  //       .srcAccessMask   = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
-  //       .dstAccessMask   = selfDependency.srcAccessMask,
-  //       .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT  // Required, since we use framebuffer-space stages
-  //   };
-  //
-  //   // No dependency on external data
-  //   const VkRenderPassCreateInfo rpInfo{
-  //       .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-  //       .attachmentCount = static_cast<uint32_t>(attachments.size()),
-  //       .pAttachments    = attachments.data(),
-  //       .subpassCount    = 1,
-  //       .pSubpasses      = &subpass,
-  //       .dependencyCount = 1,
-  //       .pDependencies   = &selfDependency,
-  //   };
-  //
-  //   NVVK_CHECK(vkCreateRenderPass(m_app->getDevice(), &rpInfo, NULL, &m_renderPassColorDepthClear));
-  //   NVVK_DBG_NAME(m_renderPassColorDepthClear);
-  //}
-
-  // m_renderPassWeighted
-  // This render pass is used for Weighted, Blended Order-Independent
-  // Transparency. It's somewhat tricky, and has two subpasses, with three
-  // total attachments (weighted color, weighted reveal, color).
-  // The first two attachments are cleared, and the three attachments
-  // are all initially laid out for color attachments.
-  // Subpass 0 takes attachments 0 and 1, and draws to them.
-  // Then subpass 1 takes attachments 0 and 1 as inputs in the
-  // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL layout and attachment 2 as an
-  // output attachment, and performs the WBOIT resolve step.
-  // See https://www.saschawillems.de/blog/2018/07/19/vulkan-input-attachments-and-sub-passes/
-  // for an example of a different type.
-  //{
-    // Describe the attachments at the beginning and end of the render pass.
-  //   const VkAttachmentDescription weightedColorAttachment{.format  = m_oitWeightedColorFormat,
-  //                                                         .samples = static_cast<VkSampleCountFlagBits>(m_state.msaa),
-  //                                                         .loadOp  = VK_ATTACHMENT_LOAD_OP_CLEAR,
-  //                                                         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-  //                                                         .stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-  //                                                         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-  //                                                         .initialLayout  = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-  //                                                         .finalLayout    = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-  //
-  //   VkAttachmentDescription weightedRevealAttachment = weightedColorAttachment;
-  //   weightedRevealAttachment.format                  = m_oitWeightedRevealFormat;
-  //
-  //   VkAttachmentDescription colorAttachment = weightedColorAttachment;
-  //   colorAttachment.format                  = m_colorImage.getFormat();
-  //   colorAttachment.loadOp                  = VK_ATTACHMENT_LOAD_OP_LOAD;
-  //
-  //   VkAttachmentDescription depthAttachment = colorAttachment;
-  //   depthAttachment.format                  = m_depthImage.getFormat();
-  //   depthAttachment.initialLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-  //   depthAttachment.finalLayout             = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-  //
-  //   const std::array<VkAttachmentDescription, 4> allAttachments = {weightedColorAttachment, weightedRevealAttachment,
-  //                                                                  colorAttachment, depthAttachment};
-  //
-  //   std::array<VkSubpassDescription, 2> subpasses{};
-  //
-  //   // Subpass 0 - weighted textures & depth texture for testing
-  //   std::array<VkAttachmentReference, 2> subpass0ColorAttachments{};
-  //   subpass0ColorAttachments[0] = VkAttachmentReference{.attachment = 0, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-  //   subpass0ColorAttachments[1] = VkAttachmentReference{.attachment = 1, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-  //
-  //   // 3 is m_depthImage
-  //   const VkAttachmentReference depthAttachmentRef{.attachment = 3, .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
-  //
-  //   subpasses[0] = VkSubpassDescription{
-  //       .pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS,
-  //       .colorAttachmentCount    = static_cast<uint32_t>(subpass0ColorAttachments.size()),
-  //       .pColorAttachments       = subpass0ColorAttachments.data(),
-  //       .pDepthStencilAttachment = &depthAttachmentRef,
-  //   };
-  //
-  //   // Subpass 1
-  //   // Attachment 2 is m_colorImage
-  //   const VkAttachmentReference subpass1ColorAttachment{.attachment = 2, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
-  //
-  //   std::array<VkAttachmentReference, 2> subpass1InputAttachments{};
-  //   subpass1InputAttachments[0] = VkAttachmentReference{.attachment = 0, .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-  //   subpass1InputAttachments[1] = VkAttachmentReference{.attachment = 1, .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-  //
-  //   subpasses[1] = VkSubpassDescription{
-  //       .pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS,
-  //       .inputAttachmentCount = static_cast<uint32_t>(subpass1InputAttachments.size()),
-  //       .pInputAttachments    = subpass1InputAttachments.data(),
-  //       .colorAttachmentCount = 1,
-  //       .pColorAttachments    = &subpass1ColorAttachment,
-  //   };
-  //
-  //   // Dependencies
-  //   std::array<VkSubpassDependency, 3> subpassDependencies{};
-  //   subpassDependencies[0] = VkSubpassDependency{
-  //       .srcSubpass    = VK_SUBPASS_EXTERNAL,
-  //       .dstSubpass    = 0,
-  //       .srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-  //       .dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-  //       .srcAccessMask = 0,
-  //       .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-  //   };
-  //   subpassDependencies[1] = VkSubpassDependency{
-  //       .srcSubpass    = 0,
-  //       .dstSubpass    = 1,
-  //       .srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-  //       .dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-  //       .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-  //       .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-  //   };
-  //   // Finally, we have a dependency at the end to allow the images to transition back to VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-  //   subpassDependencies[2] = VkSubpassDependency{
-  //       .srcSubpass    = 1,
-  //       .dstSubpass    = VK_SUBPASS_EXTERNAL,
-  //       .srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-  //       .dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-  //       .srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
-  //       .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-  //   };
-  //
-  //   // Finally, create the render pass
-  //   const VkRenderPassCreateInfo renderPassInfo{
-  //       .sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-  //       .attachmentCount = static_cast<uint32_t>(allAttachments.size()),
-  //       .pAttachments    = allAttachments.data(),
-  //       .subpassCount    = static_cast<uint32_t>(subpasses.size()),
-  //       .pSubpasses      = subpasses.data(),
-  //       .dependencyCount = static_cast<uint32_t>(subpassDependencies.size()),
-  //       .pDependencies   = subpassDependencies.data(),
-  //   };
-  //   NVVK_CHECK(vkCreateRenderPass(m_app->getDevice(), &renderPassInfo, nullptr, &m_renderPassWeighted));
-  //   NVVK_DBG_NAME(m_renderPassWeighted);
-  // }
-}
-
 void Sample::destroyShaderModules()
 {
   m_shaderCompiler.clear(m_app->getDevice());
@@ -698,7 +516,7 @@ void Sample::createGraphicsPipelines()
   // We always need the opaque pipeline:
   m_pipelines[+PassIndex::eOpaque] = createGraphicsPipeline("Opaque", m_vertexShaders[+VertexShaderIndex::eScene],
                                                             m_fragmentShaders[+PassIndex::eOpaque], BlendMode::NONE,
-                                                            true, false, m_renderPassColorDepthClear);
+                                                            true, false);
 
   const bool transparentDoubleSided = true;  // Iff transparent objects are double-sided
 
@@ -709,73 +527,73 @@ void Sample::createGraphicsPipelines()
       m_pipelines[+PassIndex::eSimpleColor] =
           createGraphicsPipeline("SimpleColor", m_vertexShaders[+VertexShaderIndex::eScene],
                                  m_fragmentShaders[+PassIndex::eSimpleColor], BlendMode::PREMULTIPLIED, true,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       m_pipelines[+PassIndex::eSimpleComposite] =
           createGraphicsPipeline("SimpleComposite", m_vertexShaders[+VertexShaderIndex::eFullScreenTriangle],
                                  m_fragmentShaders[+PassIndex::eSimpleComposite], BlendMode::PREMULTIPLIED, false,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       break;
     case OIT_LINKEDLIST:
       m_pipelines[+PassIndex::eLinkedListColor] =
           createGraphicsPipeline("LinkedListColor", m_vertexShaders[+VertexShaderIndex::eScene],
                                  m_fragmentShaders[+PassIndex::eLinkedListColor], BlendMode::PREMULTIPLIED, true,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       m_pipelines[+PassIndex::eLinkedListComposite] =
           createGraphicsPipeline("LinkedListComposite", m_vertexShaders[+VertexShaderIndex::eFullScreenTriangle],
                                  m_fragmentShaders[+PassIndex::eLinkedListComposite], BlendMode::PREMULTIPLIED, false,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       break;
     case OIT_LOOP:
       m_pipelines[+PassIndex::eLoopDepth] =
           createGraphicsPipeline("LoopDepth", m_vertexShaders[+VertexShaderIndex::eScene], m_fragmentShaders[+PassIndex::eLoopDepth],
-                                 BlendMode::PREMULTIPLIED, true, transparentDoubleSided, m_renderPassColorDepthClear);
+                                 BlendMode::PREMULTIPLIED, true, transparentDoubleSided);
       m_pipelines[+PassIndex::eLoopColor] =
           createGraphicsPipeline("LoopColor", m_vertexShaders[+VertexShaderIndex::eScene], m_fragmentShaders[+PassIndex::eLoopColor],
-                                 BlendMode::PREMULTIPLIED, true, transparentDoubleSided, m_renderPassColorDepthClear);
+                                 BlendMode::PREMULTIPLIED, true, transparentDoubleSided);
       m_pipelines[+PassIndex::eLoopComposite] =
           createGraphicsPipeline("LoopComposite", m_vertexShaders[+VertexShaderIndex::eFullScreenTriangle],
                                  m_fragmentShaders[+PassIndex::eLoopComposite], BlendMode::PREMULTIPLIED, false,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       break;
     case OIT_LOOP64:
       m_pipelines[+PassIndex::eLoop64Color] =
           createGraphicsPipeline("Loop64Color", m_vertexShaders[+VertexShaderIndex::eScene],
                                  m_fragmentShaders[+PassIndex::eLoop64Color], BlendMode::PREMULTIPLIED, true,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       m_pipelines[+PassIndex::eLoop64Composite] =
           createGraphicsPipeline("Loop64Composite", m_vertexShaders[+VertexShaderIndex::eFullScreenTriangle],
                                  m_fragmentShaders[+PassIndex::eLoop64Composite], BlendMode::PREMULTIPLIED, false,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       break;
     case OIT_INTERLOCK:
       m_pipelines[+PassIndex::eInterlockColor] =
           createGraphicsPipeline("InterlockColor", m_vertexShaders[+VertexShaderIndex::eScene],
                                  m_fragmentShaders[+PassIndex::eInterlockColor], BlendMode::PREMULTIPLIED, true,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       m_pipelines[+PassIndex::eInterlockComposite] =
           createGraphicsPipeline("InterlockComposite", m_vertexShaders[+VertexShaderIndex::eFullScreenTriangle],
                                  m_fragmentShaders[+PassIndex::eInterlockComposite], BlendMode::PREMULTIPLIED, false,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       break;
     case OIT_SPINLOCK:
       m_pipelines[+PassIndex::eSpinlockColor] =
           createGraphicsPipeline("InterlockColor", m_vertexShaders[+VertexShaderIndex::eScene],
                                  m_fragmentShaders[+PassIndex::eSpinlockColor], BlendMode::PREMULTIPLIED, true,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       m_pipelines[+PassIndex::eSpinlockComposite] =
           createGraphicsPipeline("InterlockComposite", m_vertexShaders[+VertexShaderIndex::eFullScreenTriangle],
                                  m_fragmentShaders[+PassIndex::eSpinlockComposite], BlendMode::PREMULTIPLIED, false,
-                                 transparentDoubleSided, m_renderPassColorDepthClear);
+                                 transparentDoubleSided);
       break;
     case OIT_WEIGHTED:
       m_pipelines[+PassIndex::eWeightedColor] =
           createGraphicsPipeline("WeightedColor", m_vertexShaders[+VertexShaderIndex::eScene],
                                  m_fragmentShaders[+PassIndex::eWeightedColor], BlendMode::WEIGHTED_COLOR, true,
-                                 transparentDoubleSided, m_renderPassWeighted, 0);
+                                 transparentDoubleSided);
       m_pipelines[+PassIndex::eWeightedComposite] =
           createGraphicsPipeline("WeightedComposite", m_vertexShaders[+VertexShaderIndex::eFullScreenTriangle],
                                  m_fragmentShaders[+PassIndex::eWeightedComposite], BlendMode::WEIGHTED_COMPOSITE,
-                                 false, transparentDoubleSided, m_renderPassWeighted, 1);
+                                 false, transparentDoubleSided);
       break;
   }
 }

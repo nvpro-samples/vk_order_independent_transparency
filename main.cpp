@@ -167,14 +167,11 @@ void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuil
   const bool framebuffersAndDescriptorsNeedReinit = imagesNeedReinit  //
                                                     || forceRebuildAll;
 
-  const bool renderPassesNeedReinit = (m_state.msaa != m_lastState.msaa)  //
-                                      || forceRebuildAll;
-
   const bool pipelinesNeedReinit = (m_state.algorithm != m_lastState.algorithm)  //
                                    || shadersNeedUpdate || imagesNeedReinit;
 
   const bool anythingChanged = uniformBuffersNeedReinit || shadersNeedUpdate || sceneNeedsReinit || imagesNeedReinit
-                               || descriptorSetsNeedReinit || framebuffersAndDescriptorsNeedReinit || renderPassesNeedReinit;
+                               || descriptorSetsNeedReinit || framebuffersAndDescriptorsNeedReinit;
 
   if(anythingChanged)
   {
@@ -189,8 +186,6 @@ void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuil
       LOGI("  Frame images\n");
     if(descriptorSetsNeedReinit)
       LOGI("  Descriptor sets\n");
-    if(renderPassesNeedReinit)
-      LOGI("  Render passes\n");
     if(framebuffersAndDescriptorsNeedReinit)
       LOGI("  Framebuffers\n");
     if(shadersNeedUpdate)
@@ -220,11 +215,6 @@ void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuil
     if(descriptorSetsNeedReinit)
     {
       createDescriptorSets();
-    }
-
-    if(renderPassesNeedReinit)
-    {
-      //createRenderPasses();
     }
 
     if(framebuffersAndDescriptorsNeedReinit)
@@ -475,9 +465,7 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                           const VkShaderModule fragShaderModule,
                                           BlendMode            blendMode,
                                           bool                 usesVertexInput,
-                                          bool                 isDoubleSided,
-                                          VkRenderPass         renderPass,
-                                          uint32_t             subpass)
+                                          bool                 isDoubleSided)
 {
   const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {
       VkPipelineShaderStageCreateInfo{.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -538,12 +526,10 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
   const VkFormat colorFormat = m_colorImage.getFormat();
   const VkFormat depthFormat = m_depthImage.getFormat();
 
-  //const uint32_t colorAttachmentCount = (blendMode == BlendMode::WEIGHTED_COLOR) ? 2 : 1;
-  uint32_t colorAttachmentCount = 1;
-
   std::vector<VkFormat> colorFormats ={ colorFormat, };
   std::vector<VkDynamicState> dynamicStates = {};
 
+  //We are using 3 images in Weigh Blended OIT
   if (blendMode == BlendMode::WEIGHTED_COLOR || blendMode == BlendMode::WEIGHTED_COMPOSITE)
   {
     colorFormats =
@@ -597,7 +583,7 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
         depthStencilState.depthWriteEnable = false;
         blendInfo.attachmentCount          = 3;
 
-        //m_wboitCompositeAttachmentInputIndicesInfo.pNext = &m_wboitColorAttachmentLocationInfo;
+        //Need to pass attachment information to the pipeline
         renderingInfo.pNext = &m_wboitColorAttachmentLocationInfo;
 
         //Attachment 01: Main Color (unused in this pass)
@@ -624,8 +610,12 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
     case BlendMode::WEIGHTED_COMPOSITE:
       // Test but don't write to depth
       depthStencilState.depthWriteEnable = false;
+
+      //Need to pass both read and write shader indices for this pass.
+      //Hence we chain the arrays as below
       m_wboitCompositeAttachmentInputIndicesInfo.pNext = &m_wboitCompositeResetAttachmentLocationsInfo;
       renderingInfo.pNext = &m_wboitCompositeAttachmentInputIndicesInfo;
+
       blendInfo.attachmentCount          = 3;
 
       // Attachment 0: Main Color

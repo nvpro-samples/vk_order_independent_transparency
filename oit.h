@@ -418,9 +418,6 @@ public:
   // Device must not be using resource when called.
   void destroyRenderPasses();
 
-  // Creates or recreates all render passes.
-  void createRenderPasses();
-
   // Device must not be using resource when called.
   void destroyFramebuffers();
 
@@ -457,9 +454,7 @@ public:
                                     const VkShaderModule fragShaderModule,
                                     BlendMode            blendMode,
                                     bool                 usesVertexInput,
-                                    bool                 isDoubleSided,
-                                    VkRenderPass         renderPass,
-                                    uint32_t             subpass = 0);
+                                    bool                 isDoubleSided);
 
   /////////////////////////////////////////////////////////////////////////////
   // Main rendering logic                                                    //
