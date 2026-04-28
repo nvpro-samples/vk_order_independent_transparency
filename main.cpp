@@ -632,17 +632,17 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
 
       // Attachment 0: Main Color
       blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
-                                                                     .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                     .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                     .srcColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                     .dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
                                                                      .colorBlendOp        = VK_BLEND_OP_ADD,
-                                                                     .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                     .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                     .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                     .dstAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
                                                                      .colorWriteMask      = allBits});
 
       // Attachment 1: Weighted Color (unused in this pass)
-      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_TRUE, .colorWriteMask = 0});
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
       // Attachment 2: Reveal (unused in this pass)
-      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_TRUE, .colorWriteMask = 0});
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
       break;
     default:
       assert(!"Blend mode configuration not implemented!");
