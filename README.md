@@ -2,6 +2,8 @@
 
 Demonstrates seven different techniques for order-independent transparency (OIT) in Vulkan.
 
+### This demo project has been updated to use Dynamic Rendering over the old Vulkan RenderPasses. 
+
 ![Shows a thousand semitransparent spheres on a gray background with a user interface in the top-left corner.](doc/vk_order_independent_transparency.png)
 
 ## About
