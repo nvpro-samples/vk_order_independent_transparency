@@ -167,14 +167,11 @@ void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuil
   const bool framebuffersAndDescriptorsNeedReinit = imagesNeedReinit  //
                                                     || forceRebuildAll;
 
-  const bool renderPassesNeedReinit = (m_state.msaa != m_lastState.msaa)  //
-                                      || forceRebuildAll;
-
   const bool pipelinesNeedReinit = (m_state.algorithm != m_lastState.algorithm)  //
                                    || shadersNeedUpdate || imagesNeedReinit;
 
   const bool anythingChanged = uniformBuffersNeedReinit || shadersNeedUpdate || sceneNeedsReinit || imagesNeedReinit
-                               || descriptorSetsNeedReinit || framebuffersAndDescriptorsNeedReinit || renderPassesNeedReinit;
+                               || descriptorSetsNeedReinit || framebuffersAndDescriptorsNeedReinit;
 
   if(anythingChanged)
   {
@@ -189,8 +186,6 @@ void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuil
       LOGI("  Frame images\n");
     if(descriptorSetsNeedReinit)
       LOGI("  Descriptor sets\n");
-    if(renderPassesNeedReinit)
-      LOGI("  Render passes\n");
     if(framebuffersAndDescriptorsNeedReinit)
       LOGI("  Framebuffers\n");
     if(shadersNeedUpdate)
@@ -222,15 +217,9 @@ void Sample::updateRendererFromState(bool swapchainSizeChanged, bool forceRebuil
       createDescriptorSets();
     }
 
-    if(renderPassesNeedReinit)
-    {
-      createRenderPasses();
-    }
-
     if(framebuffersAndDescriptorsNeedReinit)
     {
       updateAllDescriptorSets();
-      createFramebuffers();
     }
 
     if(shadersNeedUpdate)
@@ -258,8 +247,6 @@ void Sample::onDetach()
   // From updateRendererFromState
   destroyGraphicsPipelines();
   destroyShaderModules();
-  destroyFramebuffers();
-  destroyRenderPasses();
   destroyDescriptorSets();
   destroyFrameImages();
   destroyScene();
@@ -416,68 +403,12 @@ void Sample::initScene()
   uploader.deinit();
 }
 
-void Sample::destroyFramebuffers()
-{
-  vkDestroyFramebuffer(m_app->getDevice(), m_mainColorDepthFramebuffer, nullptr);
-  m_mainColorDepthFramebuffer = VK_NULL_HANDLE;
-
-  if(m_weightedFramebuffer != VK_NULL_HANDLE)
-  {
-    vkDestroyFramebuffer(m_app->getDevice(), m_weightedFramebuffer, nullptr);
-    m_weightedFramebuffer = VK_NULL_HANDLE;
-  }
-}
-
-void Sample::createFramebuffers()
-{
-  destroyFramebuffers();
-  // TODO: Remove and replace with dynamic rendering
-
-  // Color + depth offscreen framebuffer
-  {
-    const std::array<VkImageView, 2> attachments{m_colorImage.getView(), m_depthImage.getView()};
-    const VkFramebufferCreateInfo    fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-                                            .renderPass      = m_renderPassColorDepthClear,
-                                            .attachmentCount = static_cast<uint32_t>(attachments.size()),
-                                            .pAttachments    = attachments.data(),
-                                            .width           = m_colorImage.getWidth(),
-                                            .height          = m_colorImage.getHeight(),
-                                            .layers          = 1};
-
-    NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, NULL, &m_mainColorDepthFramebuffer));
-    NVVK_DBG_NAME(m_mainColorDepthFramebuffer);
-  }
-
-  // Weighted color + weighted reveal framebuffer (for Weighted, Blended
-  // Order-Independent Transparency). See the render pass description for more info.
-  if(m_state.algorithm == OIT_WEIGHTED)
-  {
-    const std::array<VkImageView, 4> attachments{m_oitWeightedColorImage.getView(),   //
-                                                 m_oitWeightedRevealImage.getView(),  //
-                                                 m_colorImage.getView(),              //
-                                                 m_depthImage.getView()};
-
-    const VkFramebufferCreateInfo fbInfo{.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-                                         .renderPass      = m_renderPassWeighted,
-                                         .attachmentCount = static_cast<uint32_t>(attachments.size()),
-                                         .pAttachments    = attachments.data(),
-                                         .width           = m_oitWeightedColorImage.getWidth(),
-                                         .height          = m_oitWeightedColorImage.getHeight(),
-                                         .layers          = 1};
-
-    NVVK_CHECK(vkCreateFramebuffer(m_app->getDevice(), &fbInfo, nullptr, &m_weightedFramebuffer));
-    NVVK_DBG_NAME(m_weightedFramebuffer);
-  }
-}
-
 VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                           const VkShaderModule vertShaderModule,
                                           const VkShaderModule fragShaderModule,
                                           BlendMode            blendMode,
                                           bool                 usesVertexInput,
-                                          bool                 isDoubleSided,
-                                          VkRenderPass         renderPass,
-                                          uint32_t             subpass)
+                                          bool                 isDoubleSided)
 {
   const std::array<VkPipelineShaderStageCreateInfo, 2> stages = {
       VkPipelineShaderStageCreateInfo{.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -530,10 +461,43 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
   VkPipelineDepthStencilStateCreateInfo depthStencilState{.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
                                                           .depthTestEnable = true,
                                                           .depthCompareOp  = VK_COMPARE_OP_LESS};
-  std::array<VkPipelineColorBlendAttachmentState, 2> blendAttachments{};
+  std::vector<VkPipelineColorBlendAttachmentState> blendAttachments{};
   VkPipelineColorBlendStateCreateInfo blendInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
                                                 .attachmentCount = 1,  // This can be modified below
                                                 .pAttachments    = blendAttachments.data()};
+
+  const VkFormat colorFormat = m_colorImage.getFormat();
+  const VkFormat depthFormat = m_depthImage.getFormat();
+
+  std::vector<VkFormat> colorFormats ={ colorFormat, };
+  std::vector<VkDynamicState> dynamicStates = {};
+
+  //We are using 3 images in Weigh Blended OIT
+  if (blendMode == BlendMode::WEIGHTED_COLOR || blendMode == BlendMode::WEIGHTED_COMPOSITE)
+  {
+    colorFormats =
+    {
+      colorFormat,
+      m_oitWeightedColorFormat,
+      m_oitWeightedRevealFormat,
+    };
+  }
+
+  VkPipelineRenderingCreateInfo renderingInfo
+  {
+    .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+    .colorAttachmentCount    = (uint32_t) colorFormats.size(),
+    .pColorAttachmentFormats = colorFormats.data(),
+    .depthAttachmentFormat   = depthFormat,
+  };
+
+  // Setup Dynamic State Info
+  VkPipelineDynamicStateCreateInfo dynamicStateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+  if (!dynamicStates.empty())
+  {
+    dynamicStateInfo.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicStateInfo.pDynamicStates    = dynamicStates.data();
+  }
 
   constexpr VkColorComponentFlags allBits =
       VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -542,56 +506,84 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
     case BlendMode::NONE:
       // Test and write to depth
       depthStencilState.depthWriteEnable = true;
-      blendAttachments[0] = VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = allBits};
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = allBits});
       // Leave blending disabled
       break;
     case BlendMode::PREMULTIPLIED:
       // Test but don't write to depth
       depthStencilState.depthWriteEnable = false;
-      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+      blendAttachments.push_back(                 VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
                                                                                .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
                                                                                .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
                                                                                .colorBlendOp        = VK_BLEND_OP_ADD,
                                                                                .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
                                                                                .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .colorWriteMask = allBits};
+                                                                               .colorWriteMask = allBits});
       break;
     case BlendMode::WEIGHTED_COLOR:
-      // Test but don't write to depth
-      depthStencilState.depthWriteEnable = false;
-      blendInfo.attachmentCount          = 2;
-      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
-                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
-                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-                                                                               .colorWriteMask      = allBits};
-      blendAttachments[1]                = VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
-                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
-                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
-                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
-                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
-                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .colorWriteMask = allBits};
+        // Test but don't write to depth
+        // Pass 1: Write to 0 and 1
+        depthStencilState.depthWriteEnable = false;
+        blendInfo.attachmentCount          = 3;
+
+        //Need to pass attachment information to the pipeline
+        renderingInfo.pNext = &m_wboitColorAttachmentLocationInfo;
+
+        //Attachment 01: Main Color (unused in this pass)
+        blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
+        // Attachment 1: Weighted Color
+        blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                       .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                       .dstColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                       .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                       .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                       .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                       .colorWriteMask      = allBits});
+        // Attachment 2: Reveal
+        blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                       .srcColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                       .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR,
+                                                                       .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                       .srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                       .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                       .colorWriteMask      = allBits});
+
+
       break;
     case BlendMode::WEIGHTED_COMPOSITE:
       // Test but don't write to depth
       depthStencilState.depthWriteEnable = false;
-      blendAttachments[0]                = VkPipelineColorBlendAttachmentState{.blendEnable = VK_TRUE,
-                                                                               .srcColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-                                                                               .colorBlendOp        = VK_BLEND_OP_ADD,
-                                                                               .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-                                                                               .dstAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-                                                                               .colorWriteMask      = allBits};
+
+      //Need to pass both read and write shader indices for this pass.
+      //Hence we chain the arrays as below
+      m_wboitCompositeAttachmentInputIndicesInfo.pNext = &m_wboitCompositeResetAttachmentLocationsInfo;
+      renderingInfo.pNext = &m_wboitCompositeAttachmentInputIndicesInfo;
+
+      blendInfo.attachmentCount          = 3;
+
+      // Attachment 0: Main Color
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable         = VK_TRUE,
+                                                                     .srcColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                     .dstColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+                                                                     .colorBlendOp        = VK_BLEND_OP_ADD,
+                                                                     .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                     .dstAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+                                                                     .colorWriteMask      = allBits});
+
+      // Attachment 1: Weighted Color (unused in this pass)
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
+      // Attachment 2: Reveal (unused in this pass)
+      blendAttachments.push_back(VkPipelineColorBlendAttachmentState{.blendEnable = VK_FALSE, .colorWriteMask = 0});
       break;
     default:
       assert(!"Blend mode configuration not implemented!");
       break;
   }
 
+  blendInfo.pAttachments = blendAttachments.data();
+
   const VkGraphicsPipelineCreateInfo info{.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                                          .pNext               = &renderingInfo,
                                           .stageCount          = uint32_t(stages.size()),
                                           .pStages             = stages.data(),
                                           .pVertexInputState   = &vertexInput,
@@ -602,8 +594,7 @@ VkPipeline Sample::createGraphicsPipeline(const std::string&   debugName,
                                           .pDepthStencilState  = &depthStencilState,
                                           .pColorBlendState    = &blendInfo,
                                           .layout              = m_pipelineLayout,
-                                          .renderPass          = renderPass,
-                                          .subpass             = subpass};
+                                          .renderPass          = VK_NULL_HANDLE};
 
   VkPipeline pipeline = VK_NULL_HANDLE;
   NVVK_CHECK(vkCreateGraphicsPipelines(m_app->getDevice(), VK_NULL_HANDLE, 1, &info, nullptr, &pipeline));
@@ -813,11 +804,19 @@ int main(int argc, char* argv[])
       .fragmentShaderShadingRateInterlock = VK_FALSE  // (we don't need this)
   };
 
+  VkPhysicalDeviceDynamicRenderingLocalReadFeatures dynamicRenderingFeatures{
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR,
+    .pNext = nullptr,
+    .dynamicRenderingLocalRead = VK_TRUE
+  };
+
   nvvk::ContextInitInfo vkSetup{
       .instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
       .deviceExtensions   = {nvvk::ExtensionInfo{.extensionName = VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME},
                              nvvk::ExtensionInfo{.extensionName = VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME},
                              nvvk::ExtensionInfo{.extensionName = VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME},
+                             nvvk::ExtensionInfo{.extensionName = VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME},
+                             nvvk::ExtensionInfo{.extensionName = VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME},
                              nvvk::ExtensionInfo{.extensionName = VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME,
                                                  .feature       = &fragmentShaderInterlockFeatures,
                                                  .required      = false}}};

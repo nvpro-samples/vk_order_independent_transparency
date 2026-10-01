@@ -175,9 +175,7 @@ public:
   // We have one of these per frame since the CPU can be uploading to one while
   // the other is being used for rendering.
   std::vector<nvvk::Buffer> m_uniformBuffers;
-  // We only need one of each of these resources, since only one draw operation will run at once.
-  VkFramebuffer m_mainColorDepthFramebuffer = VK_NULL_HANDLE;
-  VkFramebuffer m_weightedFramebuffer       = VK_NULL_HANDLE;
+
   ImageAndView  m_depthImage;
   ImageAndView  m_colorImage;
   BufferAndView m_oitABuffer;
@@ -187,6 +185,57 @@ public:
   ImageAndView  m_oitCounterImage;
   ImageAndView  m_oitWeightedColorImage;
   ImageAndView  m_oitWeightedRevealImage;
+
+  /////////////////////////////////////////////////////////////////////////////
+  //Weighted OIT color attachment mappings
+  /*
+   * Specifies the locations of color attachments in a Vulkan render pass.
+   *
+   * These arrays contain indices corresponding to the attachment points in the
+   * color attachments array which can be found in drawTransparentWeighted().
+   *
+   * - `VK_ATTACHMENT_UNUSED` indicates that the corresponding color output is not used.
+   * - Other values represent valid attachment indices.
+   *
+   * The size of the array represents the maximum number of color attachments
+   * considered for this particular configuration.
+   */
+  /////////////////////////////////////////////////////////////////////////////
+
+
+  /*
+   * VkRenderingAttachmentLocationInfo is used to decide which color attachment will receive which shader output
+   * eg [image 1 in the color attachments array will receive the data written by layout(location = 1) out float outReveal]
+   * In other words, the array index is used to decide how shader outputs map to color attachments.
+   * This array is created here and needs to be passed to the pipeline at construction time and also needs to be called as part of cmd buffer recording.
+   * See createGraphicsPipeline and drawTransparentWeighted() for implementations of these.
+  */
+
+  //WBOIT uses two passes. We need the first pass to write exclusively to the accumulutation and revealage image attachments and ignore the main color pass
+  //Index 0 of the color attachments array maps to an unused output.
+  //Index 1 of the color attachments array maps to shader layout (0) -> color
+  //Index 2 of the color attachments array maps to shader layout (1) -> alpha
+  std::array<uint32_t, 3>             m_wboitColorAttachmentLocations = {VK_ATTACHMENT_UNUSED, 0, 1, };
+  VkRenderingAttachmentLocationInfo   m_wboitColorAttachmentLocationInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
+                                                    nullptr,
+                                                    static_cast<uint32_t>(m_wboitColorAttachmentLocations.size()),
+                            m_wboitColorAttachmentLocations.data()};
+
+  //These are used in the composite
+  //Same explanation applies here too as the previous array. The only difference is this is used to reset the shader write order back to default
+  std::array<uint32_t, 3>             m_wboitCompositeResetAttachmentLocations = {0, VK_ATTACHMENT_UNUSED, VK_ATTACHMENT_UNUSED};
+  VkRenderingAttachmentLocationInfo   m_wboitCompositeResetAttachmentLocationsInfo{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_LOCATION_INFO_KHR,
+                                                    nullptr,
+                                                    static_cast<uint32_t>(m_wboitCompositeResetAttachmentLocations.size()),
+                            m_wboitCompositeResetAttachmentLocations.data()};
+
+  //This is used to decide the shader input read order. This maps which color attachment from the color attachments array is read by which shader input
+  std::array<uint32_t, 3>             m_wboitCompositeAttachmentInputIndices{VK_ATTACHMENT_UNUSED, 1, 2  };
+  VkRenderingInputAttachmentIndexInfo m_wboitCompositeAttachmentInputIndicesInfo{VK_STRUCTURE_TYPE_RENDERING_INPUT_ATTACHMENT_INDEX_INFO_KHR,
+                                                                      nullptr,
+                                                                      static_cast<uint32_t>(m_wboitCompositeAttachmentInputIndices.size()),
+                                                                      m_wboitCompositeAttachmentInputIndices.data()};
+
   // Depending on the MSAA settings and resolution, we may want to downsample
   // to a 1 sample per screen pixel texture:
   ImageAndView m_downsampleImage;
@@ -207,9 +256,7 @@ public:
   // Descriptors
   nvvk::DescriptorPack m_descriptorPack;
   VkPipelineLayout     m_pipelineLayout = VK_NULL_HANDLE;
-  // Render passes
-  VkRenderPass m_renderPassColorDepthClear = VK_NULL_HANDLE;
-  VkRenderPass m_renderPassWeighted        = VK_NULL_HANDLE;
+
   // Graphics pipelines (organized by the algorithms that use them)
   std::array<VkPipeline, size_t(PassIndex::eCount)> m_pipelines{};
 
@@ -315,18 +362,6 @@ public:
   void updateAllDescriptorSets();
 
   // Device must not be using resource when called.
-  void destroyRenderPasses();
-
-  // Creates or recreates all render passes.
-  void createRenderPasses();
-
-  // Device must not be using resource when called.
-  void destroyFramebuffers();
-
-  // Device must not be using resource when called.
-  void createFramebuffers();
-
-  // Device must not be using resource when called.
   void destroyShaderModules();
 
   // Call this function whenever you need to update the shader definitions or
@@ -356,9 +391,7 @@ public:
                                     const VkShaderModule fragShaderModule,
                                     BlendMode            blendMode,
                                     bool                 usesVertexInput,
-                                    bool                 isDoubleSided,
-                                    VkRenderPass         renderPass,
-                                    uint32_t             subpass = 0);
+                                    bool                 isDoubleSided);
 
   /////////////////////////////////////////////////////////////////////////////
   // Main rendering logic                                                    //
@@ -395,7 +428,7 @@ public:
 
   // Draws the first numObjects objects using the two-pass depth sorting OIT
   // method. Assumes that the right render pass has already been started, and
-  // that the index and vertex buffers for the mesh and drescriptors are already
+  // that the index and vertex buffers for the mesh and descriptors are already
   // good to go.
   void drawTransparentLoop(VkCommandBuffer& cmdBuffer, int numObjects);
 
@@ -403,7 +436,7 @@ public:
 
   // A variant of OIT_LOOP that uses one less draw pass when the GPU supports
   // 64-bit atomics. Assumes that the right render pass has already been started, and
-  // that the index and vertex buffers for the mesh and drescriptors are already
+  // that the index and vertex buffers for the mesh and descriptors are already
   // good to go.
   void drawTransparentLoop64(VkCommandBuffer& cmdBuffer, int numObjects);
 
@@ -422,5 +455,5 @@ public:
   // and is an approximate technique; instead, it uses two intermediate render
   // targets, which we implement using a render pass (see the creation of the
   // render pass for more information as to how that's set up).
-  void drawTransparentWeighted(VkCommandBuffer& cmdBuffer, int numObjects);
+  void drawTransparentWeighted(VkCommandBuffer& cmdBuffer , int numObjects);
 };
